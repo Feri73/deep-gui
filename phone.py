@@ -34,7 +34,7 @@ class Phone:
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
-        res = subprocess.check_output(command)
+        res = subprocess.check_output(command, shell=True)
         if not as_bytes:
             return res.decode('utf-8')
         return res
@@ -77,7 +77,7 @@ class Phone:
     def get_app_name(self, apk_path: str) -> str:
         apk_path = os.path.abspath(apk_path)
         command = f'{self.aapt_path} dump badging "{apk_path}" | grep package'
-        res = subprocess.check_output(command).decode('utf-8')
+        res = subprocess.check_output(command, shell=True).decode('utf-8')
         regex = re.compile(r'name=\'([^\']+)\'')
         return regex.search(res).group(1)
 
