@@ -67,6 +67,7 @@ class RLAgent(ABC):
     def is_built(self) -> bool:
         return self.rl_model.built
 
+    # add gradient clipping
     def gradient_producer(self, tape: tf.GradientTape, loss: tf.Tensor, total_gradient: Gradient,
                           last_total_gradient: Gradient) -> Callable[[], Gradient]:
         def produce_gradient() -> Gradient:

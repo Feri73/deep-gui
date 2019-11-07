@@ -92,7 +92,7 @@ class PolicyGenerator(models.Sequential):
 class ValueEstimator(layers.Layer):
     def __init__(self):
         super(ValueEstimator, self).__init__()
-        self.inner_network = layers.Dense(1, activation='relu')
+        self.inner_network = layers.Dense(1, activation='sigmoid')
 
     @tf.function
     def call(self, input: tf.Tensor) -> tf.Tensor:
