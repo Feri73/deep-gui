@@ -1,7 +1,7 @@
-import multiprocessing as mp
+# import multiprocessing as mp
 from typing import Tuple
 
-import gensim
+# import gensim
 import numpy as np
 import tensorflow as tf
 
@@ -10,21 +10,21 @@ layers = keras.layers
 models = keras.models
 
 
-class Word2Vec:
-    def __init__(self, file_path: str):
-        model = gensim.models.KeyedVectors.load_word2vec_format(file_path, binary=True)
-        words = list(model.vocab.keys())
-        self.word2index_dict = {word: word_i for word_i, word in enumerate(words)}
-        self.mp_arrays = []
-        for word in words:
-            self.mp_arrays += [mp.Array('f', model[word].tolist())]
-
-    def __call__(self, *args, **kwargs) -> tf.Tensor:
-        words = args[0]
-        result = []
-        for word in words:
-            result += [self.mp_arrays[self.word2index_dict[word]][:]]
-        return tf.constant(result)
+# class Word2Vec:
+#     def __init__(self, file_path: str):
+#         model = gensim.models.KeyedVectors.load_word2vec_format(file_path, binary=True)
+#         words = list(model.vocab.keys())
+#         self.word2index_dict = {word: word_i for word_i, word in enumerate(words)}
+#         self.mp_arrays = []
+#         for word in words:
+#             self.mp_arrays += [mp.Array('f', model[word].tolist())]
+#
+#     def __call__(self, *args, **kwargs) -> tf.Tensor:
+#         words = args[0]
+#         result = []
+#         for word in words:
+#             result += [self.mp_arrays[self.word2index_dict[word]][:]]
+#         return tf.constant(result)
 
 
 class ScreenPreprocessor(layers.Layer):
