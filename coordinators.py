@@ -1,0 +1,136 @@
+import multiprocessing as mp
+import threading as td
+from queue import Empty
+from datetime import datetime
+from typing import Type, Tuple, List
+
+from reinforcement_learning import RLCoordinator, RLAgent
+from utils import Config
+
+RLAgentInfo = Tuple[Type[RLAgent], tuple]
+
+
+# maybe the name should be asynchronous, and then we have two subclasses, multithread and multiprocess
+class MultiprocessRLCoordinator(RLCoordinator):
+    def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
+                 input_shape: tuple, config: Config):
+        self.send_queue = None
+        self.receive_queue = None
+        self.agent = None
+        self.learning_agents_info = learning_agents_info
+        self.final_agent_info = final_agent_info
+        self.input_shape = input_shape
+        self.steps_per_agent = config['steps_per_agent']
+        self.gradient_queue_size = config['gradient_queue_size']
+        self.steps_per_save = config['steps_per_save']
+        self.save_to_path = config['save_to_path']
+
+    def create_agent(self, agent_id: int, agent_info: RLAgentInfo) -> RLAgent:
+        return agent_info[0](agent_id, self, *agent_info[1])
+
+    def add_gradient(self, agent_id, gradient):
+        self.send_queue.put(gradient)
+        new_weights = None
+        try:
+            while True:
+                new_weights = self.receive_queue.get_nowait()
+        except Empty:
+            pass
+        if new_weights is not None:
+            print(f'{datetime.now()}: agent #{agent_id} is updating weights')
+            # neater api for setting weights
+            self.agent.rl_model.set_weights(new_weights)
+
+    def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
+        self.send_queue = send_queue
+        self.receive_queue = receive_queue
+        self.agent = self.create_agent(agent_i, self.learning_agents_info[agent_i])
+        self.agent.start_learning(self.steps_per_agent, 0)
+        send_queue.put('done')
+
+    # do i have to specify device here (like cpu:0 or :1)
+    def start_learning(self):
+        queues = []
+        for agent_i in range(len(self.learning_agents_info)):
+            queues += [(mp.Queue(self.gradient_queue_size), mp.Queue(self.gradient_queue_size))]
+        processes = []
+        for agent_i in range(len(self.learning_agents_info)):
+            processes += [mp.Process(name=f'learning agent #{agent_i}', target=self.run_agent,
+                                     args=(*queues[agent_i], agent_i))]
+            processes[-1].start()
+        final_agent = self.create_agent(len(self.learning_agents_info), self.final_agent_info)
+        if not final_agent.is_built():
+            final_agent.build_model(self.input_shape)
+
+        update_count = 0
+        # test the termination condition
+        while len(queues) > 0:
+            updated = False
+            for receive_queue, send_queue in [q for q in queues]:
+                try:
+                    # or maybe i can sum all gradients and then apply once
+                    gradient = receive_queue.get_nowait()
+                    if gradient == 'done':
+                        queues.remove((receive_queue, send_queue))
+                        receive_queue.close()
+                        send_queue.close()
+                    else:
+                        print(f'{datetime.now()}: applying gradients')
+                        final_agent.apply_gradient(gradient)
+                        updated = True
+                except Empty:
+                    pass
+            if updated:
+                if update_count > 0 and update_count % (self.steps_per_save * len(self.learning_agents_info)) == 0:
+                    print(f'{datetime.now()}: saving ...')
+                    # neater api
+                    final_agent.rl_model.save_weights(self.save_to_path)
+                update_count += 1
+                print(f'{datetime.now()}: sending updated weights')
+                for _, send_queue in queues:
+                    # neater api for getting weights
+                    send_queue.put(final_agent.rl_model.get_weights())
+
+
+class MultithreadRLCoordinator(RLCoordinator):
+    def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
+                 input_shape: tuple, config: Config):
+        self.learning_agents_info = learning_agents_info
+        self.final_agent_info = final_agent_info
+        self.input_shape = input_shape
+        self.steps_per_agent = config['steps_per_agent']
+        self.steps_per_save = config['steps_per_save']
+        self.save_to_path = config['save_to_path']
+        self.agents = []
+        self.final_agent = None
+        self.update_count = 0
+
+    def create_agent(self, agent_id: int, agent_info: RLAgentInfo) -> RLAgent:
+        return agent_info[0](agent_id, self, *agent_info[1])
+
+    def add_gradient(self, agent_id, gradient):
+        self.final_agent.apply_gradient(gradient)
+        self.agents[agent_id].replace_weights(self.final_agent)
+        if agent_id == 0:
+            if self.update_count > 0 and self.update_count % self.steps_per_save == 0:
+                print(f'{datetime.now()}: saving ...')
+                # neater api
+                self.agents[agent_id].rl_model.save_weights(self.save_to_path)
+            self.update_count += 1
+
+    def run_agent(self, agent_i: int) -> None:
+        agent = self.agents[agent_i]
+        agent.start_learning(self.steps_per_agent, 0)
+
+    # do i have to specify device here (like cpu:0 or :1)
+    def start_learning(self):
+        self.final_agent = self.create_agent(len(self.learning_agents_info), self.final_agent_info)
+        if not self.final_agent.is_built():
+            self.final_agent.build_model(self.input_shape)
+        processes = []
+        for agent_i in range(len(self.learning_agents_info)):
+            self.agents += [self.create_agent(agent_i, self.learning_agents_info[agent_i])]
+            processes += [td.Thread(name=f'learning agent #{agent_i}', target=self.run_agent, args=(agent_i,))]
+            processes[-1].start()
+        for p in processes:
+            p.join()

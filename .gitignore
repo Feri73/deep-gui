@@ -1,0 +1,14 @@
+# Ignore everything
+*
+
+# But not these files...
+!.gitignore
+!actor_critic.py
+!coordinators.py
+!environment.py
+!learn_relevant_action.py
+!phone.py
+!reinforcement_learning.py
+!relevant_action.py
+!screen_parsing.py
+!utils.py
