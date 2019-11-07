@@ -44,9 +44,9 @@ class Agent(RLAgent):
                                      self.screen_new_shape, self.representation_size),
                        PolicyGenerator((*self.screen_new_shape, self.action_type_count)),
                        ValueEstimator(), weighted_policy_user, cfg)
-        if is_target:
-            # plot this in tensorboard
-            keras.utils.plot_model(rl_model, to_file='model.png', expand_nested=True)
+        # if is_target:
+        #     # plot this in tensorboard
+        #     keras.utils.plot_model(rl_model, to_file='model.png', expand_nested=True)
         super(Agent, self).__init__(id, coordinator, environment, rl_model, optimizer,
                                     None if is_target else tf.summary.create_file_writer(f'summaries/agent{agent_id}'),
                                     cfg)
