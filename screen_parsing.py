@@ -2,11 +2,8 @@ import multiprocessing as mp
 from typing import Tuple
 
 import gensim
-import tensorflow as tf
-
-import matplotlib.pyplot as plt
-
 import numpy as np
+import tensorflow as tf
 
 keras = tf.keras
 layers = keras.layers
@@ -45,9 +42,9 @@ class ScreenPreprocessor(layers.Layer):
             tf.image.crop_to_bounding_box(tf.cast(input, tf.float32) / 255.0,
                                           self.crop_top_left[0], self.crop_top_left[1],
                                           self.crop_size[0], self.crop_size[1]), self.new_shape))
-        if res.__class__.__name__ == 'EagerTensor':
-            plt.imshow(res[0, :, :, 0])
-            plt.show()
+        # if res.__class__.__name__ == 'EagerTensor':
+        #     plt.imshow(res[0, :, :, 0])
+        #     plt.show()
         return res
         # return tf.image.resize(tf.cast(input, tf.float32) / 255.0, self.new_shape)
 

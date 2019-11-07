@@ -3,10 +3,8 @@ import os
 import re
 import subprocess
 import time
-from distutils.dir_util import copy_tree
 from typing import Union
 
-import cv2
 import matplotlib.image as mpimg
 import numpy as np
 

@@ -1,3 +1,4 @@
+import time as tm
 from typing import Tuple, Callable, Any
 
 import numpy as np
@@ -5,10 +6,6 @@ import numpy as np
 from environment import Environment
 from phone import Phone
 from utils import Config
-
-import matplotlib.pyplot as plt
-
-import time as tm
 
 
 # some parts of this should be factorized to a generalized class

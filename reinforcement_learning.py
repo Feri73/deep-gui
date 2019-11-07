@@ -10,7 +10,6 @@ import tensorflow as tf
 
 from environment import Environment
 from utils import Config, Gradient, add_gradients
-import time
 
 keras = tf.keras
 
