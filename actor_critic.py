@@ -52,7 +52,9 @@ class A2C(RLModel):
         policy_loss = -tf.reduce_sum(tf.math.log(responsible_outputs) * advantages)
         # do i need .5 coeff?
         value_loss = tf.reduce_sum(tf.square(advantages))
-        entropy = -tf.reduce_sum(policies * tf.math.log(policies))
+
+        logs = tf.math.log(policies)
+        entropy = -tf.reduce_sum(policies * tf.where(tf.math.is_nan(logs), tf.zeros_like(logs), logs))
 
         # why my loss becomes so negative?
         return policy_loss + self.value_loss_coeff * value_loss - self.entropy_loss_coeff * entropy
