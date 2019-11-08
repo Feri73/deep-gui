@@ -76,24 +76,24 @@ class PolicyGenerator(models.Sequential):
         super(PolicyGenerator, self).__init__([
             # this should be better. i should not use the dense in ScreenEncoder and this dense here. Instead, i
             #   should use cnn to reshape the output of ScreenEncoder to the correct shape and then proceed with conv2dt
-            layers.Dense(np.prod(output_screen_size) // 64 * 32, activation='relu'),
+            layers.Dense(np.prod(output_screen_size) // 64 * 32, activation='elu'),
             # there is a bug in tf 2.0 that does not work with np.int32 integers in eager mode
             layers.Reshape((*tuple([int(x) for x in np.array(output_screen_size) // 8]), 32)),
-            layers.Conv2DTranspose(filters=64, kernel_size=3, strides=2, padding='same', activation='relu'),
-            layers.Conv2DTranspose(filters=32, kernel_size=3, strides=2, padding='same', activation='relu'),
+            layers.Conv2DTranspose(filters=64, kernel_size=3, strides=2, padding='same', activation='elu'),
+            layers.Conv2DTranspose(filters=32, kernel_size=3, strides=2, padding='same', activation='elu'),
             # do i need activation here?
             layers.Conv2DTranspose(filters=output_channels_size, kernel_size=3,
-                                   strides=2, padding='same', activation='relu'),
-            layers.Flatten(),
-            layers.Activation('softmax')
+                                   strides=2, padding='same', activation='elu'),
+            layers.Flatten()
         ])
 
 
 class ValueEstimator(layers.Layer):
     def __init__(self):
         super(ValueEstimator, self).__init__()
-        self.inner_network = layers.Dense(1, activation='sigmoid')
+        # self.inner_network = layers.Dense(1, activation='sigmoid')
 
     @tf.function
     def call(self, input: tf.Tensor) -> tf.Tensor:
-        return self.inner_network(input)
+        return tf.ones((input.shape[0], 1)) + 0 * input
+        # return self.inner_network(input)

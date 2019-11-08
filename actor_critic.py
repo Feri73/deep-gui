@@ -32,12 +32,11 @@ class A2C(RLModel):
         representation = self.process_layer(state)
         policy = self.actor_layer(representation)
         value_estimate = self.critic_layer(representation)
-        return self.policy_user(policy), policy, value_estimate
+        return self.policy_user(tf.nn.softmax(policy)), policy, value_estimate
 
     @tf.function
     def compute_loss(self, actions, rewards, policies, value_estimates):
         action_onehots = tf.one_hot(actions, policies.shape[2])[:, :, 0, :]
-        responsible_outputs = tf.reduce_sum(policies * action_onehots, [2])
         # no bootstrap for now. i assume all episodes are over
         # value_estimates = np.asarray(value_estimates.tolist() + [0])
 
@@ -49,12 +48,14 @@ class A2C(RLModel):
 
         advantages = discounted_rewards - value_estimates
 
-        policy_loss = -tf.reduce_sum(tf.math.log(responsible_outputs) * advantages)
+        norm_terms = tf.reduce_sum(tf.math.exp(policies), axis=-1)
+        prob_logs = policies - tf.math.log(norm_terms)
+        probs = tf.math.exp(prob_logs)
+        responsible_prob_logs = tf.reduce_sum(prob_logs * action_onehots, axis=-1)
+        policy_loss = -tf.reduce_sum(responsible_prob_logs * tf.stop_gradient(advantages))
         # do i need .5 coeff?
         value_loss = tf.reduce_sum(tf.square(advantages))
-
-        logs = tf.math.log(policies)
-        entropy = -tf.reduce_sum(policies * tf.where(tf.math.is_nan(logs), tf.zeros_like(logs), logs))
+        entropy = -tf.reduce_sum(probs * prob_logs)
 
         # why my loss becomes so negative?
         return policy_loss + self.value_loss_coeff * value_loss - self.entropy_loss_coeff * entropy

@@ -18,6 +18,9 @@ from reinforcement_learning import RLAgent, RLCoordinator
 from utils import Config
 
 
+# add action resolution parameter
+# add an off policy buffer and add similar actions
+# set MP threads per process
 # create a dependency yaml file
 # add different policyUsers
 # plot the network architecture
@@ -27,6 +30,7 @@ from utils import Config
 # how to run emulator on a specific core
 # look at the todos and comments in the other project (code)
 # test the network independent of the task (only on a couple of image in a trivial dataset that i create to test)
+# maybe actor critic is not the best option here. look into q learning and REINFORCE
 class Agent(RLAgent):
     def __init__(self, id: int, coordinator: RLCoordinator, agent_id: int, optimizer: keras.optimizers.Optimizer,
                  is_target: bool, input_shape: tuple, cfg: Config):
@@ -81,7 +85,9 @@ tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
 if __name__ == '__main__':
     agents_count = cfg['agents_count']
     screen_shape = tuple(cfg['screen_shape'])
+    multiprocessing = cfg['multiprocessing']
 
+    # should i set batch size to None or 1?
     input_shape = (1, *screen_shape, 3)
 
 
@@ -93,8 +99,8 @@ if __name__ == '__main__':
     learning_agents_info = [agent_info_factory(i, False) for i in range(agents_count)]
     final_agent_info = agent_info_factory(len(learning_agents_info), True)
 
-    # should i set batch size to None or 1?
-    coord = MultiprocessRLCoordinator(learning_agents_info, final_agent_info, input_shape, cfg)
-    # should i set batch size to None or 1?
-    # coord = MultithreadRLCoordinator(learning_agents_info, final_agent_info, input_shape, cfg)
+    if multiprocessing:
+        coord = MultiprocessRLCoordinator(learning_agents_info, final_agent_info, input_shape, cfg)
+    else:
+        coord = MultithreadRLCoordinator(learning_agents_info, final_agent_info, input_shape, cfg)
     coord.start_learning()

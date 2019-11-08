@@ -80,6 +80,7 @@ class RLAgent(ABC):
                 # this should use tf function. but how?
                 gradient = tape.gradient(loss, self.rl_model.trainable_weights)
                 # is this good and efficient?
+                # check the weights to see their size and correctness
                 return add_gradients(gradient, total_gradient)
             return 0
 
@@ -91,11 +92,11 @@ class RLAgent(ABC):
         episode_reward = keras.metrics.Sum(dtype=tf.float32)
         mean_episode_reward = keras.metrics.Mean(dtype=tf.float32)
         mean_loss = keras.metrics.Mean(dtype=tf.float32)
-        total_gradient = 0
         last_tape = None
         loss = None
         last_total_gradient = None
         for step_i in range(step_count):
+            total_gradient = 0
             for _ in range(self.steps_per_gradient_update):
                 self.environment.restart()
                 # if i assume episodes are of same length this can be much more efficient
@@ -136,15 +137,16 @@ class RLAgent(ABC):
             if step_i == step_count - 1:
                 total_gradient = self.gradient_producer(last_tape, loss, total_gradient, None)()
                 self.gradient_producer(None, None, None, total_gradient)()
-            else:
+            elif total_gradient != 0:
                 last_total_gradient = total_gradient
-            with self.summary_writer.as_default():
-                # use callbacks here
-                tf.summary.scalar('RLAgent/mean episode reward', mean_episode_reward.result(), summary_step + step_i)
-                tf.summary.scalar('RLAgent/mean loss', mean_loss.result(), summary_step + step_i)
-                tf.summary.scalar('RLAgent/gradient', tf.linalg.global_norm(total_gradient), summary_step + step_i)
-                tf.summary.scalar('RLAgent/weights', tf.linalg.global_norm(self.rl_model.get_weights()),
-                                  summary_step + step_i)
-                mean_episode_reward.reset_states()
-                mean_loss.reset_states()
+            if total_gradient != 0:
+                with self.summary_writer.as_default():
+                    # use callbacks here
+                    tf.summary.scalar('RLAgent/mean episode reward', mean_episode_reward.result(), summary_step + step_i)
+                    tf.summary.scalar('RLAgent/mean loss', mean_loss.result(), summary_step + step_i)
+                    tf.summary.scalar('RLAgent/gradient', tf.linalg.global_norm(total_gradient), summary_step + step_i)
+                    tf.summary.scalar('RLAgent/weights', tf.linalg.global_norm(self.rl_model.get_weights()),
+                                      summary_step + step_i)
+                    mean_episode_reward.reset_states()
+                    mean_loss.reset_states()
             # do i have to release the tapes??

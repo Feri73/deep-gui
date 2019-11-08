@@ -9,6 +9,7 @@ from utils import Config
 
 
 # some parts of this should be factorized to a generalized class
+# sort apps randomly for each agent
 class RelevantActionEnvironment(Environment):
     def __init__(self, phone: Phone, cfg: Config):
         self.phone = phone
