@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Type, Tuple, List
 
 from reinforcement_learning import RLCoordinator, RLAgent
-from utils import Config
+from utils import Config, add_gradients
 
 RLAgentInfo = Tuple[Type[RLAgent], tuple]
 
@@ -47,6 +47,10 @@ class MultiprocessRLCoordinator(RLCoordinator):
         self.agent = self.create_agent(agent_i, self.learning_agents_info[agent_i])
         self.agent.start_learning(self.steps_per_agent, 0)
         send_queue.put('done')
+        while True:
+            fin = self.receive_queue.get()
+            if fin == True:
+                break
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
@@ -63,23 +67,27 @@ class MultiprocessRLCoordinator(RLCoordinator):
             final_agent.build_model(self.input_shape)
 
         update_count = 0
-        # test the termination condition
+        all_queues = [q for q in queues]
         while len(queues) > 0:
             updated = False
             for receive_queue, send_queue in [q for q in queues]:
+                # or maybe i can sum all gradients and then apply once
+                gradient = 0
                 try:
-                    # or maybe i can sum all gradients and then apply once
-                    gradient = receive_queue.get_nowait()
-                    if gradient == 'done':
-                        queues.remove((receive_queue, send_queue))
-                        receive_queue.close()
-                        send_queue.close()
-                    else:
-                        print(f'{datetime.now()}: applying gradients')
-                        final_agent.apply_gradient(gradient)
-                        updated = True
+                    while True:
+                        tmp = receive_queue.get_nowait()
+                        if tmp == 'done':
+                            queues.remove((receive_queue, send_queue))
+                            send_queue.put(True)
+                            break
+                        else:
+                            gradient = add_gradients(tmp, gradient)
                 except Empty:
                     pass
+                if gradient != 0:
+                    print(f'{datetime.now()}: applying gradients')
+                    final_agent.apply_gradient(gradient)
+                    updated = True
             if updated:
                 if update_count > 0 and update_count % (self.steps_per_save * len(self.learning_agents_info)) == 0:
                     print(f'{datetime.now()}: saving ...')
@@ -87,9 +95,14 @@ class MultiprocessRLCoordinator(RLCoordinator):
                     final_agent.rl_model.save_weights(self.save_to_path)
                 update_count += 1
                 print(f'{datetime.now()}: sending updated weights')
-                for _, send_queue in queues:
+                for _, send_queue in [q for q in queues]:
                     # neater api for getting weights
                     send_queue.put(final_agent.rl_model.get_weights())
+        for q1, q2 in all_queues:
+            q1.close()
+            q2.close()
+        for p in processes:
+            p.join()
 
 
 class MultithreadRLCoordinator(RLCoordinator):

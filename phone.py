@@ -107,7 +107,6 @@ class Phone:
             self.add_app_activity(app_name)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
 
-    # check the output (correct image is passed) because the code is changed
     def screenshot(self) -> np.ndarray:
         screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
@@ -123,3 +122,25 @@ class Phone:
         print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')
         self.adb(f'emu event mouse {x} {y} 0 1')
         self.adb(f'emu event mouse {x} {y} 0 0')
+
+
+class DummyPhone:
+    def __init__(self, device_name: str, port: int, cfg: Config):
+        self.screen_shape = tuple(cfg['screen_shape'])
+        self.device_name = device_name
+        self.app_names = ['dummy']
+
+    def start_phone(self) -> None:
+        pass
+
+    def close_app(self, app_name: str) -> None:
+        pass
+
+    def open_app(self, app_name: str) -> None:
+        pass
+
+    def screenshot(self) -> np.ndarray:
+        return np.zeros((*self.screen_shape, 3))
+
+    def send_event(self, x: int, y: int, type: int) -> None:
+        print(f'{datetime.now()}: dummy event sent to {self.device_name}')

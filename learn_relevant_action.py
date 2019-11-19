@@ -8,7 +8,7 @@ import yaml
 
 from actor_critic import A2C
 from coordinators import MultiprocessRLCoordinator, MultithreadRLCoordinator
-from phone import Phone
+import phone
 from relevant_action import RelevantActionEnvironment
 from screen_parsing import ScreenEncoder, PolicyGenerator, ValueEstimator
 
@@ -20,12 +20,11 @@ from utils import Config
 
 # add action resolution parameter
 # add an off policy buffer and add similar actions
-# set MP threads per process
 # create a dependency yaml file
 # add different policyUsers
 # plot the network architecture
 # plot images and scenarios in tensorboard
-# save differnet versoin of the model (with different names, probably identifying the accuracy at the moment of saving)
+# save different version of the model (with different names, probably identifying the accuracy at the moment of saving)
 # set name for each of the network elements
 # how to run emulator on a specific core
 # look at the todos and comments in the other project (code)
@@ -75,10 +74,15 @@ with open('setting.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
 eager_mode = cfg['eager_mode']
+dummy_mode = cfg['dummy_mode']
 inter_op_core_count = cfg['inter_op_core_count']
 intra_op_core_count = cfg['intra_op_core_count']
 if eager_mode:
     tf.config.experimental_run_functions_eagerly(True)
+if dummy_mode:
+    Phone = phone.DummyPhone
+else:
+    Phone = phone.Phone
 tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
 tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
 

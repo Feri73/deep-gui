@@ -9,7 +9,6 @@ from utils import Config
 
 
 # some parts of this should be factorized to a generalized class
-# sort apps randomly for each agent
 class RelevantActionEnvironment(Environment):
     def __init__(self, phone: Phone, cfg: Config):
         self.phone = phone
@@ -27,6 +26,8 @@ class RelevantActionEnvironment(Environment):
         self.last_state = None
         assert self.steps_per_app % self.steps_per_episode == 0
         self.phone.start_phone()
+        # better way for doing this
+        np.random.shuffle(self.phone.app_names)
 
     def restart(self) -> None:
         self.finished = False

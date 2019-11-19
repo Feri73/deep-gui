@@ -59,7 +59,6 @@ class ScreenEncoder(models.Sequential):
             # alpha should be in config
             # give this more thought and pick the best architecture
             #   also, consider changing this to simple 2-3 stacked cnns, because it takes much less that way
-            # why using mobilenet does not work here (threading issue)
             keras.applications.MobileNetV2(input_shape=(*screen_new_shape, 1), include_top=False, weights=None,
                                            alpha=.9),
             layers.Flatten(),
@@ -93,7 +92,15 @@ class ValueEstimator(layers.Layer):
         super(ValueEstimator, self).__init__()
         # self.inner_network = layers.Dense(1, activation='sigmoid')
 
+    @staticmethod
+    @tf.custom_gradient
+    def static_ones(input: tf.Tensor) -> tf.Tensor:
+        def grad(y):
+            return tf.zeros_like(input)
+
+        return tf.ones((input.shape[0], 1)), grad
+
     @tf.function
     def call(self, input: tf.Tensor) -> tf.Tensor:
-        return tf.ones((input.shape[0], 1)) + 0 * input
+        return ValueEstimator.static_ones(input)
         # return self.inner_network(input)
