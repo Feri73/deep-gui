@@ -58,6 +58,10 @@ class RLAgent(ABC):
     def realize_action(self, action: int) -> Any:
         pass
 
+    @abstractmethod
+    def log_episode(self, states: List[tf.Tensor], actions: list, step: int) -> None:
+        pass
+
     @tf.function
     def apply_gradient(self, gradient: Gradient) -> None:
         self.optimizer.apply_gradients(zip(gradient, self.rl_model.trainable_weights))
@@ -104,12 +108,17 @@ class RLAgent(ABC):
                 reward_history = []
                 inner_measures_histories = []
                 with tf.GradientTape() as tape:
+                    states = []
+                    realized_actions = []
                     while not self.environment.is_finished():
                         state = self.environment.read_state()
                         # is this ok? it should not create new model (i.e. weights) every time!
                         action, *inner_measures = self.rl_model(tf.expand_dims(state, axis=0))
+                        realized_action = self.realize_action(int(action[0]))
+                        states += [state]
+                        realized_actions += [realized_action]
                         with tape.stop_recording():
-                            reward, total_gradient = self.environment.act(self.realize_action(int(action[0])),
+                            reward, total_gradient = self.environment.act(realized_action,
                                                                           partial(self.produce_gradient, last_tape,
                                                                                   loss, total_gradient,
                                                                                   last_total_gradient))
@@ -153,4 +162,5 @@ class RLAgent(ABC):
                         tf.summary.scalar(f'RLModel/{metric_name}', metric_value, summary_step + step_i)
                     mean_episode_reward.reset_states()
                     mean_loss.reset_states()
+                    self.log_episode(states + [self.environment.read_state()], realized_actions, summary_step + step_i)
             # do i have to release the tapes??
