@@ -1,16 +1,18 @@
 import time as tm
-from typing import Tuple, Callable, Any
+from typing import Tuple, Callable, Any, List
 
 import numpy as np
 
-from environment import Environment
+from environment import Environment, EnvironmentCallbacks, EnvironmentController
 from phone import Phone
 from utils import Config
 
 
 # some parts of this should be factorized to a generalized class
 class RelevantActionEnvironment(Environment):
-    def __init__(self, phone: Phone, cfg: Config):
+    def __init__(self, callbacks: List[EnvironmentCallbacks], controller: EnvironmentController,
+                 phone: Phone, cfg: Config):
+        super(RelevantActionEnvironment, self).__init__(callbacks, controller)
         self.phone = phone
         self.time = 0
         self.current_state = None
@@ -28,6 +30,17 @@ class RelevantActionEnvironment(Environment):
         self.phone.start_phone()
         # better way for doing this
         np.random.shuffle(self.phone.app_names)
+
+    def start(self):
+        while self.should_start_episode():
+            self.restart()
+            self.episode_start(self.read_state())
+            while self.is_finished():
+                last_state = self.read_state()
+                reward, _ = self.act(self.get_action(self.read_state()), self.waiting)
+                self.new_action(last_state, self.read_state())
+                self.new_state(self.read_state(), reward)
+            self.episode_end()
 
     def restart(self) -> None:
         self.finished = False

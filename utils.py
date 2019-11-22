@@ -24,3 +24,21 @@ def discount(gamma, rewards):
     return tf.nn.conv1d(
         tf.pad(rewards, tf.constant([[0, 0], [0, rewards.shape[1] - 1], [0, 0]]), 'CONSTANT'),
         [[[gamma ** i]] for i in range(rewards.shape[1])], stride=1, padding='VALID')
+
+
+class MemVariable:
+    def __init__(self, init_value: Callable[[], Any], memory_size: int = 1):
+        self.value = init_value()
+        self.init_value = init_value
+        self.memory_size = memory_size
+        self.reset_memory()
+
+    def archive(self):
+        self.memory = (self.memory + [self.value])[:self.memory_size]
+        self.value = self.init_value()
+
+    def last_value(self, index: int = 0) -> Any:
+        return self.memory[index]
+
+    def reset_memory(self):
+        self.memory = []

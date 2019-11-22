@@ -8,8 +8,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import tensorflow as tf
 
-from environment import Environment
-from utils import Config, Gradient, add_gradients
+from environment import Environment, EnvironmentCallbacks, EnvironmentController
+from utils import Config, Gradient, add_gradients, MemVariable
 
 keras = tf.keras
 
@@ -42,7 +42,8 @@ class RLCoordinator(ABC):
 # rethink the functions (like iteration count should be input of start learning, etc.) or names and meaning of
 #   classes (like RLCoordinator is only about learning, while RLAgent plays too!)
 # this should inherit from Model
-class RLAgent(ABC):
+class RLAgent(ABC, EnvironmentCallbacks, EnvironmentController):
+
     def __init__(self, id: int, coordinator: Optional[RLCoordinator], environment: Environment, rl_model: RLModel,
                  optimizer: keras.optimizers.Optimizer, summary_writer: tf.summary.SummaryWriter,
                  config: Config):
@@ -53,6 +54,20 @@ class RLAgent(ABC):
         self.optimizer = optimizer
         self.summary_writer = summary_writer
         self.steps_per_gradient_update = config['steps_per_gradient_update']
+        self.total_episodes = config['total_episodes']
+        self.steps = 0
+
+        self.episode_reward = MemVariable(lambda: keras.metrics.Sum(dtype=tf.float32))
+        self.mean_episode_reward = MemVariable(lambda: keras.metrics.Mean(dtype=tf.float32))
+        self.mean_loss = MemVariable(lambda: keras.metrics.Mean(dtype=tf.float32))
+        self.tape = MemVariable(lambda: tf.GradientTape())
+        self.total_gradient = MemVariable(lambda: 0)
+        self.states = MemVariable(lambda: [])
+        self.realized_actions = MemVariable(lambda: [])
+
+        self.inner_measures = None
+        self.action_history = None
+        self.reward_history = None
 
     @abstractmethod
     def realize_action(self, action: int) -> Any:
@@ -60,6 +75,53 @@ class RLAgent(ABC):
 
     @abstractmethod
     def log_episode(self, states: List[tf.Tensor], actions: list, step: int) -> None:
+        pass
+
+    def should_restart(self) -> bool:
+        return self.steps < self.total_episodes
+
+    def get_action(self, state: np.ndarray) -> Any:
+        action, *self.inner_measures = self.rl_model(tf.expand_dims(state, axis=0))
+        self.action_history += [action[0]]
+        return self.realize_action(int(action[0]))
+
+    def episode_start(self, state: np.ndarray) -> None:
+        self.total_gradient.archive()
+        self.states.archive()
+        self.realized_actions.archive()
+
+        self.states.value += [state]
+
+        self.action_history = []
+        self.reward_history = []
+
+    def episode_end(self) -> None:
+        loss = self.rl_model.compute_loss(tf.reshape(self.action_history, shape=(1, -1, 1)),
+                                          tf.reshape(self.reward_history, shape=(1, -1, 1)),
+                                          *[tf.reshape(measure_history,
+                                                       shape=(1, len(inner_measures_histories[0]), -1))
+                                            for measure_history in inner_measures_histories])
+        self.steps += 1
+        if self.steps % self.steps_per_gradient_update == 0:
+            self.last_total_gradient = self.total_gradient
+            with self.summary_writer.as_default():
+                # use callbacks here
+                tf.summary.scalar('RLAgent/mean episode reward', self.mean_episode_reward.result(), self.steps)
+                tf.summary.scalar('RLAgent/mean loss', self.mean_loss.result(), self.steps)
+                tf.summary.scalar('RLAgent/gradient', tf.linalg.global_norm(self.total_gradient), self.steps)
+                tf.summary.scalar('RLAgent/weights', tf.linalg.global_norm(self.rl_model.get_weights()), self.steps)
+                for metric_name, metric_value in self.rl_model.get_log_values():
+                    tf.summary.scalar(f'RLModel/{metric_name}', metric_value, self.steps)
+                self.mean_episode_reward.reset_states()
+                self.mean_loss.reset_states()
+                self.log_episode(self.states + [self.environment.read_state()], self.realized_actions, self.steps)
+            # do i have to release the tapes??
+
+    def new_state(self, state: np.ndarray, reward: float) -> None:
+        self.episode_reward.update_state(reward)
+        self.reward_history += [reward]
+
+    def waiting(self) -> None:
         pass
 
     @tf.function
