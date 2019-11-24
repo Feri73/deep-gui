@@ -30,9 +30,10 @@ class MultiprocessRLCoordinator(RLCoordinator):
         return agent_info[0](agent_id, self, *agent_info[1])
 
     def add_gradient(self, agent_id, gradient):
+        print(f'{datetime.now()}: agent #{agent_id} is sending gradients - {self.send_queue.qsize()}')
         self.send_queue.put(gradient)
         new_weights = None
-        print(f'{datetime.now()}: agent #{agent_id} is contacting coordinator')
+        print(f'{datetime.now()}: agent #{agent_id} is contacting coordinator - {self.receive_queue.qsize()}')
         try:
             while True:
                 new_weights = self.receive_queue.get_nowait()
@@ -72,11 +73,9 @@ class MultiprocessRLCoordinator(RLCoordinator):
         all_queues = [q for q in queues]
         while len(queues) > 0:
             updated = False
-            print(f'{datetime.now()}: starting contacting workers')
             for queue_i, (receive_queue, send_queue) in enumerate([q for q in queues]):
                 # or maybe i can sum all gradients and then apply once
                 gradient = 0
-                print(f'{datetime.now()}: contacting {queue_i} for gradients')
                 try:
                     while True:
                         tmp = receive_queue.get_nowait()
@@ -89,7 +88,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
                 except Empty:
                     pass
                 if gradient != 0:
-                    print(f'{datetime.now()}: applying gradients from {queue_i}')
+                    print(f'{datetime.now()}: applying gradients from #{queue_i} - {receive_queue.qsize()}')
                     final_agent.apply_gradient(gradient)
                     updated = True
             if updated:
@@ -100,7 +99,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
                 update_count += 1
                 print(f'{datetime.now()}: starting sending updates')
                 for queue_i, (_, send_queue) in enumerate([q for q in queues]):
-                    print(f'{datetime.now()}: sending updated weights to #{queue_i}')
+                    print(f'{datetime.now()}: sending updated weights to #{queue_i} - {send_queue.qsize()}')
                     # neater api for getting weights
                     send_queue.put(final_agent.rl_model.get_weights())
         for q1, q2 in all_queues:
