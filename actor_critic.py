@@ -61,9 +61,8 @@ class A2C(RLModel):
 
         advantages = discounted_rewards - value_estimates
 
-        norm_terms = tf.reduce_sum(tf.math.exp(policies), axis=-1)
-        prob_logs = policies - tf.math.log(norm_terms)
-        probs = tf.math.exp(prob_logs)
+        prob_logs = tf.nn.log_softmax(policies)
+        probs = tf.nn.softmax(policies)
         responsible_prob_logs = tf.reduce_sum(prob_logs * action_onehots, axis=-1)
         policy_loss = -tf.reduce_sum(responsible_prob_logs * tf.stop_gradient(advantages[:, :, 0]))
         value_loss = tf.reduce_sum(tf.square(advantages))

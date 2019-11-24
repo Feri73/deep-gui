@@ -58,13 +58,10 @@ class Agent(RLAgent):
             rl_model.load_weights(save_to_path)
 
     def log_episode(self, states, actions, step):
-        for state_i in range(len(states)):
-            if state_i < len(actions):
-                action = actions[state_i]
-                states[state_i][max(action[1] - 4, 0):action[1] + 4, max(action[0] - 4, 0):
-                                                                     action[0] + 4, :] = [255, 0, 0]
-            # how come here i don't need to use self.summary_writer??
-            tf.summary.image('episode', states[state_i:state_i + 1], state_i)
+        action = actions[0]
+        states[0][max(action[1] - 4, 0):action[1] + 4, max(action[0] - 4, 0): action[0] + 4, :] = [255, 0, 0]
+        # how come here i don't need to use self.summary_writer??
+        tf.summary.image('episode', states[0:1], step)
 
     def realize_action(self, action: int) -> Tuple[int, int, int]:
         type = action // np.prod(self.screen_new_shape)
