@@ -10,6 +10,7 @@ from utils import Config, add_gradients
 RLAgentInfo = Tuple[Type[RLAgent], tuple]
 
 
+# explicitly say multiprocessing should not be fork-based
 # maybe the name should be asynchronous, and then we have two subclasses, multithread and multiprocess
 class MultiprocessRLCoordinator(RLCoordinator):
     def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
@@ -31,6 +32,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
     def add_gradient(self, agent_id, gradient):
         self.send_queue.put(gradient)
         new_weights = None
+        print(f'{datetime.now()}: agent #{agent_id} is contacting coordinator')
         try:
             while True:
                 new_weights = self.receive_queue.get_nowait()
@@ -70,9 +72,11 @@ class MultiprocessRLCoordinator(RLCoordinator):
         all_queues = [q for q in queues]
         while len(queues) > 0:
             updated = False
-            for receive_queue, send_queue in [q for q in queues]:
+            print(f'{datetime.now()}: starting contacting workers')
+            for queue_i, (receive_queue, send_queue) in enumerate([q for q in queues]):
                 # or maybe i can sum all gradients and then apply once
                 gradient = 0
+                print(f'{datetime.now()}: contacting {queue_i} for gradients')
                 try:
                     while True:
                         tmp = receive_queue.get_nowait()
@@ -85,7 +89,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
                 except Empty:
                     pass
                 if gradient != 0:
-                    print(f'{datetime.now()}: applying gradients')
+                    print(f'{datetime.now()}: applying gradients from {queue_i}')
                     final_agent.apply_gradient(gradient)
                     updated = True
             if updated:
@@ -94,8 +98,9 @@ class MultiprocessRLCoordinator(RLCoordinator):
                     # neater api
                     final_agent.rl_model.save_weights(self.save_to_path)
                 update_count += 1
-                print(f'{datetime.now()}: sending updated weights')
-                for _, send_queue in [q for q in queues]:
+                print(f'{datetime.now()}: starting sending updates')
+                for queue_i, (_, send_queue) in enumerate([q for q in queues]):
+                    print(f'{datetime.now()}: sending updated weights to #{queue_i}')
                     # neater api for getting weights
                     send_queue.put(final_agent.rl_model.get_weights())
         for q1, q2 in all_queues:
@@ -105,6 +110,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
             p.join()
 
 
+# explicitly say multithreading should not be fork-based
 class MultithreadRLCoordinator(RLCoordinator):
     def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
                  input_shape: tuple, config: Config):

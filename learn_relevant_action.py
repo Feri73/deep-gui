@@ -18,6 +18,8 @@ from reinforcement_learning import RLAgent, RLCoordinator
 from utils import Config
 
 
+# logging step should be different than gradient_update_step
+# check emulator sometimes it resets (generally, have a mechanism for resetting a worker when something fails)
 # add action resolution parameter
 # add an off policy buffer and add similar actions
 # create a dependency yaml file
