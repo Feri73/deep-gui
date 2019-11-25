@@ -54,6 +54,7 @@ class RLAgent(ABC):
         self.summary_writer = summary_writer
         self.steps_per_gradient_update = config['steps_per_gradient_update']
 
+    # action should not be one int (which comes from the assumption that actions are discrete and this is the index)
     @abstractmethod
     def realize_action(self, action: int) -> Any:
         pass
