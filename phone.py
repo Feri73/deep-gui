@@ -10,7 +10,7 @@ import numpy as np
 
 import glob
 
-from utils import Config
+from utils import Config, run_parallel_command
 
 
 class Phone:
@@ -55,12 +55,7 @@ class Phone:
             # copy_tree(local_snapshot_path, ref_snapshot_path)
 
     def start_emulator(self) -> None:
-        command = f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}'
-        if os.name == 'nt':
-            command = f'start /min {command}'
-        else:
-            command = f'{command} &'
-        os.system(command)
+        run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}')
         time.sleep(self.phone_start_wait_time)
 
     def initial_setups(self) -> None:

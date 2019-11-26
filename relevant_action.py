@@ -14,8 +14,7 @@ class RelevantActionEnvironment(Environment):
                  phone: Phone, cfg: Config):
         super(RelevantActionEnvironment, self).__init__(callbacks, controller)
         self.phone = phone
-        self.time = 0
-        self.current_state = None
+
         self.steps_per_app = cfg['steps_per_app']
         self.steps_per_episode = cfg['steps_per_episode']
         self.state_equality_epsilon = cfg['state_equality_epsilon']
@@ -23,42 +22,37 @@ class RelevantActionEnvironment(Environment):
         self.app_start_wait_time = cfg['app_start_wait_time']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
+        assert self.steps_per_app % self.steps_per_episode == 0
+
+        self.step = 0
         self.cur_app_index = -1
         self.finished = False
-        self.last_state = None
-        assert self.steps_per_app % self.steps_per_episode == 0
+        self.current_state = None
+        self.has_state_changed = True
+
         self.phone.start_phone()
         # better way for doing this
         np.random.shuffle(self.phone.app_names)
 
-    def start(self):
-        while self.should_start_episode():
-            self.restart()
-            self.episode_start(self.read_state())
-            while self.is_finished():
-                last_state = self.read_state()
-                reward, _ = self.act(self.get_action(self.read_state()), self.waiting)
-                self.new_action(last_state, self.read_state())
-                self.new_state(self.read_state(), reward)
-            self.episode_end()
-
     def restart(self) -> None:
         self.finished = False
-        if self.time % self.steps_per_app == 0:
-            self.time = 0
+        if self.step % self.steps_per_app == 0:
+            self.step = 0
             self.phone.close_app(self.phone.app_names[self.cur_app_index])
             self.cur_app_index = (self.cur_app_index + 1) % len(self.phone.app_names)
             # if self.cur_app_index == 0:
             #     self.phone.load_snapshot('fresh')
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
             tm.sleep(self.app_start_wait_time)
-            self.last_state = self.phone.screenshot()
+            self.has_state_changed = True
 
     def is_finished(self) -> bool:
         return self.finished
 
     def read_state(self) -> np.ndarray:
-        return self.last_state
+        if self.has_state_changed:
+            self.current_state = self.phone.screenshot()
+        return self.current_state
 
     def crop_state(self, state: np.ndarray) -> np.ndarray:
         return state[
@@ -68,21 +62,28 @@ class RelevantActionEnvironment(Environment):
     def are_states_equal(self, s1: np.ndarray, s2: np.ndarray) -> bool:
         return np.linalg.norm(self.crop_state(s1) - self.crop_state(s2)) <= self.state_equality_epsilon
 
+    def send_action(self, action: Tuple[int, int, int]):
+        self.phone.send_event(*action)
+        self.has_state_changed = True
+
     # extend to actions other than click
     # remember to check if the phone is still in the correct app and other wise restart it
     # look at the phone (in dev mode) to make sure the click positions are correctly generated (realize action)
     #   and sent (env and phone (debug these two independently))
     # maybe instead of 2d discrete actions i can have continuous actions (read a3c paper for continuous actions)
-    def act(self, action: Tuple[int, int, int], computation: Callable[[], Any]) -> Tuple[float, Any]:
-        self.time += 1
-        if self.time % self.steps_per_episode == 0:
+    def act(self, action: Tuple[int, int, int], wait_action: Callable[[], Any]) -> float:
+        self.step += 1
+        if self.step % self.steps_per_episode == 0:
             self.finished = True
+
+        last_state = self.read_state()
+
         # st = tm.time()
-        self.phone.send_event(*action)
+        self.send_action(action)
         # print('action:', tm.time() - st)
 
         precomp_time = tm.time()
-        comp_res = computation()
+        wait_action()
         poscomp_time = tm.time()
         comp_time = poscomp_time - precomp_time
         if self.action_wait_time - comp_time > 0:
@@ -90,9 +91,9 @@ class RelevantActionEnvironment(Environment):
             tm.sleep(self.action_wait_time - comp_time)
 
         # st = tm.time()
-        cur_state = self.phone.screenshot()
+        cur_state = self.read_state()
         # print('screen:', tm.time() - st)
-        reward = float(not self.are_states_equal(cur_state, self.last_state))
+        reward = float(not self.are_states_equal(cur_state, last_state))
 
         # st = np.array(cur_state)
         # st[max(action[1] - 4, 0):action[1] + 4, max(action[0] - 4, 0):action[0] + 4, :] = [255, 0, 0]
@@ -105,5 +106,4 @@ class RelevantActionEnvironment(Environment):
         #     print(np.linalg.norm(self.last_state - cur_state))
         #     plt.show()
 
-        self.last_state = cur_state
-        return reward, comp_res
+        return reward

@@ -1,29 +1,27 @@
 from abc import ABC, abstractmethod
-from typing import Any, List
+from typing import Any, List, Callable
 
 import numpy as np
 
 
 # maybe i can change all numpy usage to tensorflow
 
-# better names
 class EnvironmentCallbacks:
     def on_episode_start(self, state: np.ndarray) -> None:
         pass
 
-    def on_episode_end(self) -> None:
+    # for every action, this should be called exactly once, before on_state_change is called
+    def on_wait(self) -> None:
         pass
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         pass
 
-    # for every action, this should be called exactly once, before on_state_change_us_called
-    def on_wait(self) -> None:
+    def on_episode_end(self) -> None:
         pass
 
 
 class EnvironmentController(ABC):
-
     @abstractmethod
     def should_start_episode(self) -> bool:
         pass
@@ -38,8 +36,31 @@ class Environment(ABC):
         self.callbacks = callbacks
         self.controller = controller
 
-    @abstractmethod
     def start(self):
+        while self.should_start_episode():
+            self.restart()
+            self.on_episode_start(self.read_state())
+            while not self.is_finished():
+                last_state = self.read_state()
+                action = self.get_next_action(self.read_state())
+                reward = self.act(action, self.on_wait)
+                self.on_state_change(last_state, action, self.read_state(), reward)
+            self.on_episode_end()
+
+    @abstractmethod
+    def restart(self) -> None:
+        pass
+
+    @abstractmethod
+    def read_state(self) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def is_finished(self) -> bool:
+        pass
+
+    @abstractmethod
+    def act(self, action: Any, wait_action: Callable) -> float:
         pass
 
     def should_start_episode(self) -> bool:

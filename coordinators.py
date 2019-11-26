@@ -2,31 +2,28 @@ import multiprocessing as mp
 import threading as td
 from queue import Empty
 from datetime import datetime
-from typing import Type, Tuple, List
+from typing import Tuple, List, Callable
 
+from environment import Environment
 from reinforcement_learning import RLCoordinator, RLAgent
 from utils import Config, add_gradients
 
-RLAgentInfo = Tuple[Type[RLAgent], tuple]
+RLAgentCreator = Callable[[RLCoordinator], Tuple[Environment, RLAgent]]
 
 
 # maybe the name should be asynchronous, and then we have two subclasses, multithread and multiprocess
 class MultiprocessRLCoordinator(RLCoordinator):
-    def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
+    def __init__(self, learning_agent_creators: List[RLAgentCreator], final_agent_creator: RLAgentCreator,
                  input_shape: tuple, config: Config):
         self.send_queue = None
         self.receive_queue = None
         self.agent = None
-        self.learning_agents_info = learning_agents_info
-        self.final_agent_info = final_agent_info
+        self.learning_agent_creators = learning_agent_creators
+        self.final_agent_creator = final_agent_creator
         self.input_shape = input_shape
-        self.steps_per_agent = config['steps_per_agent']
         self.gradient_queue_size = config['gradient_queue_size']
         self.steps_per_save = config['steps_per_save']
         self.save_to_path = config['save_to_path']
-
-    def create_agent(self, agent_id: int, agent_info: RLAgentInfo) -> RLAgent:
-        return agent_info[0](agent_id, self, *agent_info[1])
 
     def add_gradient(self, agent_id, gradient):
         self.send_queue.put(gradient)
@@ -44,8 +41,8 @@ class MultiprocessRLCoordinator(RLCoordinator):
     def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
         self.send_queue = send_queue
         self.receive_queue = receive_queue
-        self.agent = self.create_agent(agent_i, self.learning_agents_info[agent_i])
-        self.agent.start_learning(self.steps_per_agent, 0)
+        environment, self.agent = self.learning_agent_creators[agent_i](self)
+        environment.start()
         send_queue.put('done')
         while True:
             fin = self.receive_queue.get()
@@ -55,14 +52,14 @@ class MultiprocessRLCoordinator(RLCoordinator):
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
         queues = []
-        for agent_i in range(len(self.learning_agents_info)):
+        for agent_i in range(len(self.learning_agent_creators)):
             queues += [(mp.Queue(self.gradient_queue_size), mp.Queue(self.gradient_queue_size))]
         processes = []
-        for agent_i in range(len(self.learning_agents_info)):
+        for agent_i in range(len(self.learning_agent_creators)):
             processes += [mp.Process(name=f'learning agent #{agent_i}', target=self.run_agent,
                                      args=(*queues[agent_i], agent_i))]
             processes[-1].start()
-        final_agent = self.create_agent(len(self.learning_agents_info), self.final_agent_info)
+        _, final_agent = self.final_agent_creator(self)
         if not final_agent.is_built():
             final_agent.build_model(self.input_shape)
 
@@ -89,7 +86,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
                     final_agent.apply_gradient(gradient)
                     updated = True
             if updated:
-                if update_count > 0 and update_count % (self.steps_per_save * len(self.learning_agents_info)) == 0:
+                if update_count > 0 and update_count % (self.steps_per_save * len(self.learning_agent_creators)) == 0:
                     print(f'{datetime.now()}: saving ...')
                     # neater api
                     final_agent.rl_model.save_weights(self.save_to_path)
@@ -106,10 +103,10 @@ class MultiprocessRLCoordinator(RLCoordinator):
 
 
 class MultithreadRLCoordinator(RLCoordinator):
-    def __init__(self, learning_agents_info: List[RLAgentInfo], final_agent_info: RLAgentInfo,
+    def __init__(self, learning_agent_creators: List[RLAgentCreator], final_agent_creator: RLAgentCreator,
                  input_shape: tuple, config: Config):
-        self.learning_agents_info = learning_agents_info
-        self.final_agent_info = final_agent_info
+        self.learning_agent_creators = learning_agent_creators
+        self.final_agent_creator = final_agent_creator
         self.input_shape = input_shape
         self.steps_per_agent = config['steps_per_agent']
         self.steps_per_save = config['steps_per_save']
@@ -118,31 +115,27 @@ class MultithreadRLCoordinator(RLCoordinator):
         self.final_agent = None
         self.update_count = 0
 
-    def create_agent(self, agent_id: int, agent_info: RLAgentInfo) -> RLAgent:
-        return agent_info[0](agent_id, self, *agent_info[1])
-
     def add_gradient(self, agent_id, gradient):
         self.final_agent.apply_gradient(gradient)
-        self.agents[agent_id].replace_weights(self.final_agent)
+        self.agents[agent_id][1].replace_weights(self.final_agent)
         if agent_id == 0:
             if self.update_count > 0 and self.update_count % self.steps_per_save == 0:
                 print(f'{datetime.now()}: saving ...')
                 # neater api
-                self.agents[agent_id].rl_model.save_weights(self.save_to_path)
+                self.agents[agent_id][1].rl_model.save_weights(self.save_to_path)
             self.update_count += 1
 
     def run_agent(self, agent_i: int) -> None:
-        agent = self.agents[agent_i]
-        agent.start_learning(self.steps_per_agent, 0)
+        self.agents[agent_i][0].start()
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
-        self.final_agent = self.create_agent(len(self.learning_agents_info), self.final_agent_info)
+        _, self.final_agent = self.final_agent_creator(self)
         if not self.final_agent.is_built():
             self.final_agent.build_model(self.input_shape)
         processes = []
-        for agent_i in range(len(self.learning_agents_info)):
-            self.agents += [self.create_agent(agent_i, self.learning_agents_info[agent_i])]
+        for agent_i in range(len(self.learning_agent_creators)):
+            self.agents += [self.learning_agent_creators[agent_i](self)]
             processes += [td.Thread(name=f'learning agent #{agent_i}', target=self.run_agent, args=(agent_i,))]
             processes[-1].start()
         for p in processes:
