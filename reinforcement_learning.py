@@ -1,6 +1,6 @@
 # do not use eager execution when possible (use tf.function)
-# make this a library --> general rl library in tf 2
-from functools import partial
+# make this a library --> general rl library in tf 2 , maybe even make it in a way that tf parts of it are separated
+#     and its core is platform-independent
 from typing import Tuple, Any, Optional, List, Callable
 
 from abc import ABC, abstractmethod
@@ -8,8 +8,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import tensorflow as tf
 
-from environment import Environment
-from utils import Config, Gradient, add_gradients
+from environment import EnvironmentCallbacks, EnvironmentController
+from utils import Config, Gradient, add_gradients, MemVariable, MemList
 
 keras = tf.keras
 
@@ -42,25 +42,35 @@ class RLCoordinator(ABC):
 # rethink the functions (like iteration count should be input of start learning, etc.) or names and meaning of
 #   classes (like RLCoordinator is only about learning, while RLAgent plays too!)
 # this should inherit from Model
-class RLAgent(ABC):
-    def __init__(self, id: int, coordinator: Optional[RLCoordinator], environment: Environment, rl_model: RLModel,
-                 optimizer: keras.optimizers.Optimizer, summary_writer: tf.summary.SummaryWriter,
-                 config: Config):
+# assumes fixed-length episodes
+# this method is very long! factorize it.
+class RLAgent(EnvironmentCallbacks, EnvironmentController):
+    def __init__(self, id: int, rl_model: RLModel, realize_action: Callable[[np.ndarray], Any],
+                 coordinator: Optional[RLCoordinator], optimizer: keras.optimizers.Optimizer, cfg: Config):
         self.id = id
-        self.coordinator = coordinator
-        self.environment = environment
         self.rl_model = rl_model
+        self.realize_action = realize_action
+        self.coordinator = coordinator
         self.optimizer = optimizer
-        self.summary_writer = summary_writer
-        self.steps_per_gradient_update = config['steps_per_gradient_update']
 
-    # action should not be one int (which comes from the assumption that actions are discrete and this is the index)
-    @abstractmethod
-    def realize_action(self, action: int) -> Any:
-        pass
+        self.steps_per_gradient_update = cfg['steps_per_gradient_update']
+        self.steps_per_agent = cfg['steps_per_agent']
 
-    @abstractmethod
-    def log_episode(self, states: List[tf.Tensor], actions: list, step: int) -> None:
+        self.step = 0
+
+        self.state_history = MemVariable(lambda: [])
+        self.action_history = MemVariable(lambda: [])
+        self.realized_action_history = MemVariable(lambda: [])
+        self.reward_history = MemVariable(lambda: [])
+        self.inner_measures_histories = MemVariable(lambda: [])
+        self.tape = MemVariable(lambda: tf.GradientTape())
+        self.episode_vars = MemList([self.state_history, self.action_history, self.realized_action_history,
+                                     self.reward_history, self.inner_measures_histories, self.tape])
+
+        self.total_gradient = MemVariable(lambda: 0)
+
+    def on_episode_gradient_computed(self, loss: tf.Tensor, gradient: Gradient, state_history: List[np.ndarray],
+                                     realized_action_history: List[Any], reward_history: List[float]) -> None:
         pass
 
     @tf.function
@@ -76,92 +86,61 @@ class RLAgent(ABC):
     def is_built(self) -> bool:
         return self.rl_model.built
 
-    # add gradient clipping
-    def produce_gradient(self, tape: tf.GradientTape, loss: tf.Tensor, total_gradient: Gradient,
-                         last_total_gradient: Gradient) -> Gradient:
-        if last_total_gradient is not None:
-            if self.coordinator is None:
-                self.apply_gradient(last_total_gradient)
-            else:
-                self.coordinator.add_gradient(self.id, last_total_gradient)
-        if tape is not None:
-            # this should use tf function. but how?
-            gradient = tape.gradient(loss, self.rl_model.trainable_weights)
-            # is this good and efficient?
-            return add_gradients(gradient, total_gradient)
-        return 0
+    def should_start_episode(self) -> bool:
+        res = self.step < self.steps_per_agent
+        if not res:
+            self.on_wait()
+            self.total_gradient.archive()
+            self.on_wait()
+        return res
 
-    # assumes fixed-length episodes
-    # this method is very long! factorize it.
-    def start_learning(self, step_count: int, summary_step: int = None) -> None:
-        episode_reward = keras.metrics.Sum(dtype=tf.float32)
-        mean_episode_reward = keras.metrics.Mean(dtype=tf.float32)
-        mean_loss = keras.metrics.Mean(dtype=tf.float32)
-        last_tape = None
-        loss = None
-        last_total_gradient = None
-        for step_i in range(step_count):
-            total_gradient = 0
-            for _ in range(self.steps_per_gradient_update):
-                self.environment.restart()
-                # if i assume episodes are of same length this can be much more efficient
-                action_history = []
-                reward_history = []
-                inner_measures_histories = []
-                with tf.GradientTape() as tape:
-                    states = []
-                    realized_actions = []
-                    while not self.environment.is_finished():
-                        state = self.environment.read_state()
-                        # is this ok? it should not create new model (i.e. weights) every time!
-                        action, *inner_measures = self.rl_model(tf.expand_dims(state, axis=0))
-                        realized_action = self.realize_action(int(action[0]))
-                        states += [state]
-                        realized_actions += [realized_action]
-                        with tape.stop_recording():
-                            reward, total_gradient = self.environment.act(realized_action,
-                                                                          partial(self.produce_gradient, last_tape,
-                                                                                  loss, total_gradient,
-                                                                                  last_total_gradient))
-                            last_tape = None
-                            last_total_gradient = None
-                        episode_reward.update_state(reward)
-                        action_history += [action[0]]
-                        reward_history += [reward]
-                        for measure_i, inner_measure in enumerate(inner_measures):
-                            if len(inner_measures_histories) == measure_i:
-                                inner_measures_histories += [[]]
-                            inner_measures_histories[measure_i] += [inner_measure[0]]
-                    # maybe if i do it outside the for it becomes better (although there may be ram issue)
-                    # if i can pass tape to the compute function, i can also compute loss while waiting for action
-                    # do i need to convert histories from list to tensor before calling this function?
-                    # why do i need the last dimension in action and reward histories?
-                    loss = self.rl_model.compute_loss(tf.reshape(action_history, shape=(1, -1, 1)),
-                                                      tf.reshape(reward_history, shape=(1, -1, 1)),
-                                                      *[tf.reshape(measure_history,
-                                                                   shape=(1, len(inner_measures_histories[0]), -1))
-                                                        for measure_history in inner_measures_histories])
-                mean_loss.update_state(loss)
-                mean_episode_reward.update_state(episode_reward.result())
-                episode_reward.reset_states()
-                last_tape = tape
-            if step_i == step_count - 1:
-                total_gradient = self.gradient_producer(last_tape, loss, total_gradient, None)()
-                self.gradient_producer(None, None, None, total_gradient)()
-            elif total_gradient != 0:
-                last_total_gradient = total_gradient
-            if total_gradient != 0:
-                with self.summary_writer.as_default():
-                    # use callbacks here
-                    tf.summary.scalar('RLAgent/mean episode reward', mean_episode_reward.result(),
-                                      summary_step + step_i)
-                    tf.summary.scalar('RLAgent/mean loss', mean_loss.result(), summary_step + step_i)
-                    tf.summary.scalar('RLAgent/gradient', tf.linalg.global_norm(total_gradient), summary_step + step_i)
-                    tf.summary.scalar('RLAgent/weights', tf.linalg.global_norm(self.rl_model.get_weights()),
-                                      summary_step + step_i)
-                    for metric_name, metric_value in self.rl_model.get_log_values():
-                        tf.summary.scalar(f'RLModel/{metric_name}', metric_value, summary_step + step_i)
-                    mean_episode_reward.reset_states()
-                    mean_loss.reset_states()
-                    self.log_episode(states + [self.environment.read_state()], realized_actions, summary_step + step_i)
-            # do i have to release the tapes??
+    def on_episode_start(self, state: np.ndarray) -> None:
+        self.step += 1
+        self.state_history.value += [state]
+        self.tape.value.__enter__()
+
+    def get_next_action(self, state: np.ndarray) -> Any:
+        # is this ok? it should not create new model (i.e. weights) every time!
+        action, *inner_measures = self.rl_model(tf.expand_dims(state, axis=0))
+        realized_action = self.realize_action(action.numpy())
+
+        self.realized_action_history.value += [realized_action]
+        for measure_i, inner_measure in enumerate(inner_measures):
+            if len(self.inner_measures_histories.value) == measure_i:
+                self.inner_measures_histories.value += [[]]
+            self.inner_measures_histories.value[measure_i] += [inner_measure[0]]
+
+        return realized_action
+
+    # add gradient clipping
+    def on_wait(self) -> None:
+        with self.tape.value.stop_recording():
+            if self.episode_vars.has_archive():
+                last_inner_measures_histories = self.inner_measures_histories.last_value()
+
+                # why do i need the last dimension in action and reward histories?
+                loss = self.rl_model.compute_loss(tf.reshape(self.action_history.last_value(), shape=(1, -1, 1)),
+                                                  tf.reshape(self.reward_history.last_value(), shape=(1, -1, 1)),
+                                                  *[tf.reshape(measure_history,
+                                                               shape=(1, len(last_inner_measures_histories[0]), -1))
+                                                    for measure_history in last_inner_measures_histories])
+                self.tape.last_value().__exit__(None, None, None)
+                # this should use tf function. but how?
+                gradient = self.tape.last_value().gradient(loss, self.rl_model.trainable_weights)
+                self.on_episode_gradient_computed(loss, gradient, self.state_history.value,
+                                                  self.realized_action_history.value, self.reward_history.value)
+                self.total_gradient.value = add_gradients(self.total_gradient.value, gradient)
+            if self.total_gradient.has_archive() and self.total_gradient.last_value() != 0:
+                self.coordinator.add_gradient(self.id, self.total_gradient.last_value())
+            self.episode_vars.reset_archive()
+            self.total_gradient.reset_archive()
+
+    def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
+        self.state_history.value += [dst_state]
+        self.action_history.value += [action]
+        self.reward_history.value += [reward]
+
+    def on_episode_end(self) -> None:
+        self.episode_vars.archive()
+        if self.step % self.steps_per_gradient_update == 0:
+            self.total_gradient.archive()
