@@ -160,7 +160,7 @@ class DummyPhone:
         pass
 
     def screenshot(self) -> np.ndarray:
-        return np.zeros((*self.screen_shape, 3))
+        return np.ones((*self.screen_shape, 3)) * np.random.randint(2) * 255
 
     def send_event(self, x: int, y: int, type: int) -> None:
         print(f'{datetime.now()}: dummy event sent to {self.device_name}')

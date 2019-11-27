@@ -66,7 +66,7 @@ class RelevantActionEnvironment(Environment):
         if self.has_state_changed:
             self.current_state = self.phone.screenshot()
             self.has_state_changed = False
-        return self.current_state
+        return self.current_state.copy()
 
     def crop_state(self, state: np.ndarray) -> np.ndarray:
         return state[

@@ -129,8 +129,9 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
                 self.tape.last_value().__exit__(None, None, None)
                 # this should use tf function. but how?
                 gradient = self.tape.last_value().gradient(loss, self.rl_model.trainable_weights)
-                self.on_episode_gradient_computed(loss, gradient, self.state_history.value,
-                                                  self.realized_action_history.value, self.reward_history.value)
+                self.on_episode_gradient_computed(loss, gradient, self.state_history.last_value(),
+                                                  self.realized_action_history.last_value(),
+                                                  self.reward_history.last_value())
                 self.total_gradient.value = add_gradients(self.total_gradient.value, gradient)
             if self.total_gradient.has_archive() and self.total_gradient.last_value() != 0:
                 self.coordinator.add_gradient(self.id, self.total_gradient.last_value())
