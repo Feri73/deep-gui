@@ -42,7 +42,7 @@ class Phone:
     def is_booted(self):
         print(f'{datetime.now()}: checking boot status of {self.device_name}')
         try:
-            return self.adb('shell getprop sys.boot_completed') == '1\r\n'
+            return self.adb('shell getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
         except subprocess.CalledProcessError:
             return False
 
@@ -147,7 +147,7 @@ class DummyPhone:
         self.device_name = device_name
         self.app_names = ['dummy']
 
-    def restart(self) ->None :
+    def restart(self) -> None:
         pass
 
     def start_phone(self, fresh: bool = False) -> None:
