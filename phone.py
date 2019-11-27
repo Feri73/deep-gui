@@ -19,9 +19,8 @@ class Phone:
         self.port = port
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
-        self.phone_start_wait_time = cfg['phone_start_wait_time']
-        self.phone_restart_wait_time = cfg['phone_restart_wait_time']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
+        self.steps_per_boot_check = cfg['steps_per_boot_check']
         # self.screenshot_trials = cfg['screenshot_trials']
         self.avd_path = cfg['avd_path']
         apks_path = cfg['apks_path']
@@ -31,6 +30,7 @@ class Phone:
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
         if not os.path.exists(f'tmp-{device_name}'):
             os.makedirs(f'tmp-{device_name}')
+        self.step = 0
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
@@ -39,10 +39,28 @@ class Phone:
             return res.decode('utf-8')
         return res
 
-    def start_phone(self) -> None:
+    def is_booted(self):
+        print(f'{datetime.now()}: checking boot status of {self.device_name}')
+        try:
+            return self.adb('shell getprop sys.boot_completed') == '1\r\n'
+        except subprocess.CalledProcessError:
+            return False
+
+    def wait_for_start(self) -> None:
+        self.adb('wait-for-device')
+        while not self.is_booted():
+            time.sleep(2)
+
+    def restart(self):
+        self.adb('emu kill')
+        while self.is_booted():
+            time.sleep(1)
+        self.start_phone(True)
+
+    def start_phone(self, fresh: bool = False) -> None:
         # ref_snapshot_path = f'{self.avd_path}/snapshots/fresh'
         local_snapshot_path = f'{self.avd_path}/{self.device_name}.avd/snapshots/fresh'
-        self.start_emulator()
+        self.start_emulator(fresh)
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
         #         copy_tree(ref_snapshot_path, local_snapshot_path)
@@ -54,9 +72,10 @@ class Phone:
             self.save_snapshot('fresh')
             # copy_tree(local_snapshot_path, ref_snapshot_path)
 
-    def start_emulator(self) -> None:
-        run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}')
-        time.sleep(self.phone_start_wait_time)
+    def start_emulator(self, fresh: bool = False) -> None:
+        run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' +
+                             (f' -no-cache' if fresh else ''))
+        self.wait_for_start()
 
     def initial_setups(self) -> None:
         # now that I've updated adb see if i can use this again
@@ -103,6 +122,9 @@ class Phone:
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
 
     def screenshot(self) -> np.ndarray:
+        if self.step % self.steps_per_boot_check == 0 and not self.is_booted():
+            raise SystemError('phone is not booted.')
+        self.step += 1
         screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
         image_path = glob.glob(f'tmp-{self.device_name}/Screenshot*.png')[0]
@@ -125,7 +147,10 @@ class DummyPhone:
         self.device_name = device_name
         self.app_names = ['dummy']
 
-    def start_phone(self) -> None:
+    def restart(self) ->None :
+        pass
+
+    def start_phone(self, fresh: bool = False) -> None:
         pass
 
     def close_app(self, app_name: str) -> None:

@@ -20,6 +20,9 @@ class EnvironmentCallbacks:
     def on_episode_end(self) -> None:
         pass
 
+    def on_error(self) -> None:
+        pass
+
 
 class EnvironmentController(ABC):
     @abstractmethod
@@ -84,3 +87,7 @@ class Environment(ABC):
     def on_wait(self) -> None:
         for callback in self.callbacks:
             callback.on_wait()
+
+    def on_error(self) -> None:
+        for callback in self.callbacks:
+            callback.on_error()

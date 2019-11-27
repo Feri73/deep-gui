@@ -57,6 +57,7 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
         self.steps_per_agent = cfg['steps_per_agent']
 
         self.step = 0
+        self.in_on_wait = False
 
         self.state_history = MemVariable(lambda: [])
         self.action_history = MemVariable(lambda: [])
@@ -114,6 +115,7 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
 
     # add gradient clipping
     def on_wait(self) -> None:
+        self.in_on_wait = True
         with self.tape.value.stop_recording():
             if self.episode_vars.has_archive():
                 last_inner_measures_histories = self.inner_measures_histories.last_value()
@@ -134,6 +136,7 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
                 self.coordinator.add_gradient(self.id, self.total_gradient.last_value())
             self.episode_vars.reset_archive()
             self.total_gradient.reset_archive()
+        self.in_on_wait = False
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.state_history.value += [dst_state]
@@ -144,3 +147,10 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
         self.episode_vars.archive()
         if self.step % self.steps_per_gradient_update == 0:
             self.total_gradient.archive()
+
+    def on_error(self) -> None:
+        self.tape.value.__exit__(None, None, None)
+        self.episode_vars.reset_value()
+        if self.in_on_wait and self.episode_vars.has_archive():
+            self.tape.last_value().__exit__(None, None, None)
+            self.episode_vars.reset_archive()

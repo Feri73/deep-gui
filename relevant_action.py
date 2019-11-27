@@ -7,6 +7,10 @@ from environment import Environment, EnvironmentCallbacks, EnvironmentController
 from phone import Phone
 from utils import Config
 
+from datetime import datetime
+
+import traceback
+
 
 # some parts of this should be factorized to a generalized class
 class RelevantActionEnvironment(Environment):
@@ -34,6 +38,15 @@ class RelevantActionEnvironment(Environment):
         # better way for doing this
         np.random.shuffle(self.phone.app_names)
 
+    def start(self):
+        while True:
+            try:
+                super().start()
+                break
+            except:
+                print(f'{datetime.now()}: exception in phone #{self.phone.device_name}:\n{traceback.format_exc()}')
+                self.on_error()
+
     def restart(self) -> None:
         self.finished = False
         if self.step % self.steps_per_app == 0:
@@ -52,6 +65,7 @@ class RelevantActionEnvironment(Environment):
     def read_state(self) -> np.ndarray:
         if self.has_state_changed:
             self.current_state = self.phone.screenshot()
+            self.has_state_changed = False
         return self.current_state
 
     def crop_state(self, state: np.ndarray) -> np.ndarray:
@@ -78,32 +92,27 @@ class RelevantActionEnvironment(Environment):
 
         last_state = self.read_state()
 
-        # st = tm.time()
         self.send_action(action)
-        # print('action:', tm.time() - st)
 
         precomp_time = tm.time()
         wait_action()
         poscomp_time = tm.time()
         comp_time = poscomp_time - precomp_time
         if self.action_wait_time - comp_time > 0:
-            # print('wait:', self.action_wait_time - comp_time)
             tm.sleep(self.action_wait_time - comp_time)
 
-        # st = tm.time()
         cur_state = self.read_state()
-        # print('screen:', tm.time() - st)
         reward = float(not self.are_states_equal(cur_state, last_state))
 
-        # st = np.array(cur_state)
-        # st[max(action[1] - 4, 0):action[1] + 4, max(action[0] - 4, 0):action[0] + 4, :] = [255, 0, 0]
-        # plt.imshow(st)
-        # plt.show()
-        # if reward > 0:
-        #     plt.imshow(self.last_state)
-        #     plt.figure()
-        #     plt.imshow(cur_state)
-        #     print(np.linalg.norm(self.last_state - cur_state))
-        #     plt.show()
-
         return reward
+
+    def on_error(self):
+        try:
+            self.phone.restart()
+        except:
+            self.phone.start_phone(True)
+        # have a process that does something when this also throws exception
+        super().on_error()
+        self.phone.open_app(self.phone.app_names[self.cur_app_index])
+        tm.sleep(self.app_start_wait_time)
+        self.has_state_changed = True

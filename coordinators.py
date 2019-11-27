@@ -11,6 +11,8 @@ from utils import Config, add_gradients
 RLAgentCreator = Callable[[RLCoordinator], Tuple[Environment, RLAgent]]
 
 
+# logs here should also go to tensorboard
+
 # explicitly say multiprocessing should not be fork-based
 # maybe the name should be asynchronous, and then we have two subclasses, multithread and multiprocess
 class MultiprocessRLCoordinator(RLCoordinator):

@@ -55,6 +55,9 @@ class MemVariable:
     def has_archive(self) -> bool:
         return len(self.memory) > 0
 
+    def reset_value(self) -> None:
+        self.value = self.init_value()
+
 
 class MemList(MemVariable):
     def __init__(self, content: List[MemVariable]):
@@ -75,3 +78,7 @@ class MemList(MemVariable):
 
     def has_archive(self) -> bool:
         return sum([c.has_archive() for c in self.content]) == len(self.content)
+
+    def reset_value(self) -> None:
+        for c in self.content:
+            c.reset_value()

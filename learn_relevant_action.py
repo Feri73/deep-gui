@@ -1,7 +1,7 @@
 import os
 import shutil
 from functools import partial
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable
 
 import numpy as np
 import tensorflow as tf
@@ -37,7 +37,7 @@ from utils import Config
 # maybe actor critic is not the best option here. look into q learning and REINFORCE
 class Agent(RLAgent):
     def __init__(self, id: int, coordinator: Optional[RLCoordinator], optimizer: keras.optimizers.Optimizer,
-                 input_shape: Tuple[int, ...], cfg: Config):
+                 policy_user: Callable[[tf.Tensor], tf.Tensor], input_shape: Tuple[int, ...], cfg: Config):
         self.screen_new_shape = tuple(cfg['screen_new_shape'])
         self.action_type_count = cfg['action_type_count']
         self.representation_size = cfg['representation_size']
@@ -55,7 +55,7 @@ class Agent(RLAgent):
         rl_model = A2C(ScreenEncoder(self.crop_top_left, self.crop_size,
                                      self.screen_new_shape, self.representation_size),
                        PolicyGenerator((*self.screen_new_shape, self.action_type_count)),
-                       ValueEstimator(), weighted_policy_user, cfg)
+                       ValueEstimator(), policy_user, cfg)
 
         self.summary_writer = tf.summary.create_file_writer(f'{summary_path}/agent{id}')
 
@@ -104,6 +104,22 @@ def weighted_policy_user(policy: tf.Tensor) -> tf.Tensor:
     return tf.argmax(tfp.distributions.Multinomial(1, probs=policy).sample(), axis=-1)
 
 
+def random_policy_user(policy: tf.Tensor) -> tf.Tensor:
+    return tf.argmax(tfp.distributions.Multinomial(1, probs=tf.ones_like(policy) / policy.shape[-1]).sample(), axis=-1)
+
+
+def create_agent(agent_id, is_target, coord):
+    agent = Agent(agent_id, coord,
+                  keras.optimizers.Adam() if agent_id < agents_count // 2 else keras.optimizers.RMSprop(),
+                  weighted_policy_user if agent_id % 2 == 0 else random_policy_user, input_shape, cfg)
+    if is_target:
+        environment = None
+    else:
+        environment = RelevantActionEnvironment([agent], agent,
+                                                Phone(f'device{agent_id}', 5554 + 2 * agent_id, cfg), cfg)
+    return environment, agent
+
+
 with open('setting.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -111,6 +127,8 @@ eager_mode = cfg['eager_mode']
 dummy_mode = cfg['dummy_mode']
 inter_op_core_count = cfg['inter_op_core_count']
 intra_op_core_count = cfg['intra_op_core_count']
+agents_count = cfg['agents_count']
+screen_shape = tuple(cfg['screen_shape'])
 if eager_mode:
     tf.config.experimental_run_functions_eagerly(True)
 if dummy_mode:
@@ -119,10 +137,10 @@ else:
     Phone = phone.Phone
 tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
 tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
+# should i set batch size to None or 1?
+input_shape = (1, *screen_shape, 3)
 
 if __name__ == '__main__':
-    agents_count = cfg['agents_count']
-    screen_shape = tuple(cfg['screen_shape'])
     multiprocessing = cfg['multiprocessing']
     reset_summary = cfg['reset_summary']
     summary_path = cfg['summary_path']
@@ -132,20 +150,6 @@ if __name__ == '__main__':
             shutil.rmtree(summary_path)
     except FileNotFoundError:
         pass
-
-    # should i set batch size to None or 1?
-    input_shape = (1, *screen_shape, 3)
-
-
-    def create_agent(agent_id, is_target, coord):
-        agent = Agent(agent_id, coord, keras.optimizers.Adam(), input_shape, cfg)
-        if is_target:
-            environment = None
-        else:
-            environment = RelevantActionEnvironment([agent], agent,
-                                                    Phone(f'device{agent_id}', 5554 + 2 * agent_id, cfg), cfg)
-        return environment, agent
-
 
     learning_agent_creators = [partial(create_agent, i, False) for i in range(agents_count)]
     final_agent_creator = partial(create_agent, len(learning_agent_creators), True)
