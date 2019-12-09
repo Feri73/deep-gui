@@ -4,10 +4,9 @@ from typing import Tuple
 # import gensim
 import numpy as np
 import tensorflow as tf
-
-keras = tf.keras
-layers = keras.layers
-models = keras.models
+import tensorflow.keras as keras
+import tensorflow.keras.layers as layers
+import tensorflow.keras.models as models
 
 
 # class Word2Vec:
@@ -29,7 +28,7 @@ models = keras.models
 
 class ScreenPreprocessor(layers.Layer):
     def __init__(self, crop_top_left: Tuple[int, int], crop_size: Tuple[int, int], new_shape: Tuple[int, int]):
-        super(ScreenPreprocessor, self).__init__()
+        super().__init__()
         self.new_shape = new_shape
         self.crop_top_left = crop_top_left
         self.crop_size = crop_size
@@ -53,7 +52,7 @@ class ScreenPreprocessor(layers.Layer):
 class ScreenEncoder(models.Sequential):
     def __init__(self, crop_top_left: Tuple[int, int], crop_size: Tuple[int, int],
                  screen_new_shape: Tuple[int, int], output_size: int):
-        super(ScreenEncoder, self).__init__([
+        super().__init__([
             ScreenPreprocessor(crop_top_left, crop_size, screen_new_shape),
             # make sure that weights here are learnable
             # alpha should be in config
@@ -72,7 +71,7 @@ class PolicyGenerator(models.Sequential):
     def __init__(self, output_shape: Tuple[int, int, int]):
         output_screen_size = output_shape[:-1]
         output_channels_size = output_shape[-1]
-        super(PolicyGenerator, self).__init__([
+        super().__init__([
             # this should be better. i should not use the dense in ScreenEncoder and this dense here. Instead, i
             #   should use cnn to reshape the output of ScreenEncoder to the correct shape and then proceed with conv2dt
             layers.Dense(np.prod(output_screen_size) // 64 * 32, activation='elu'),
@@ -88,19 +87,23 @@ class PolicyGenerator(models.Sequential):
 
 
 class ValueEstimator(layers.Layer):
-    def __init__(self):
-        super(ValueEstimator, self).__init__()
+    def __init__(self, value):
+        super().__init__()
+        # read the manual one more time to see what is the different to pass tf.constant vs python float
+        self.statc_vals = ValueEstimator.get_static_vals(tf.constant(value, dtype=tf.float32))
         # self.inner_network = layers.Dense(1, activation='sigmoid')
 
     @staticmethod
-    @tf.custom_gradient
-    def static_ones(input: tf.Tensor) -> tf.Tensor:
-        def grad(y):
-            return tf.zeros_like(input)
+    def get_static_vals(value):
+        @tf.custom_gradient
+        def static_vals(input: tf.Tensor) -> tf.Tensor:
+            def grad(y):
+                return tf.zeros_like(input)
 
-        return tf.ones((input.shape[0], 1)), grad
+            return tf.ones((tf.shape(input)[0], 1)) * value, grad
+        return static_vals
 
     @tf.function
     def call(self, input: tf.Tensor) -> tf.Tensor:
-        return ValueEstimator.static_ones(input)
+        return self.statc_vals(input)
         # return self.inner_network(input)

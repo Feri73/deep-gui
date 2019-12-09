@@ -19,12 +19,19 @@ def add_gradients(gradient1: Gradient, gradient2: Gradient) -> Gradient:
     return [gradient1[i] + gradient2[i] for i in range(len(gradient1))]
 
 
-# apparently because of range this does not run fully in tf
 @tf.function
-def discount(gamma, rewards):
+def discount(gamma: tf.Tensor, array: tf.Tensor) -> tf.Tensor:
+    padding = tf.stack(
+        [tf.zeros(2, dtype=tf.int32), tf.stack([0, int(tf.shape(array)[1]) - 1]), tf.zeros(2, dtype=tf.int32)])
     return tf.nn.conv1d(
-        tf.pad(rewards, tf.constant([[0, 0], [0, rewards.shape[1] - 1], [0, 0]]), 'CONSTANT'),
-        [[[gamma ** i]] for i in range(rewards.shape[1])], stride=1, padding='VALID')
+        tf.pad(array, padding, 'CONSTANT'),
+        tf.expand_dims(tf.expand_dims(
+            tf.map_fn(lambda i: gamma ** i, tf.range(tf.shape(array)[1], dtype=tf.float32)), axis=-1), axis=-1),
+        stride=1, padding='VALID')
+
+
+def batchify(val: Union[tf.Tensor, np.ndarray]) -> tf.Tensor:
+    return tf.expand_dims(val, axis=0)
 
 
 def run_parallel_command(command: str) -> None:
@@ -43,7 +50,7 @@ class MemVariable:
         self.reset_archive()
 
     def archive(self) -> None:
-        self.memory = (self.memory + [self.value])[:self.memory_size]
+        self.memory = ([self.value] + self.memory)[:self.memory_size]
         self.value = self.init_value()
 
     def last_value(self, index: int = 0) -> Any:

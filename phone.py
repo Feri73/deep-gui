@@ -146,6 +146,8 @@ class DummyPhone:
         self.screen_shape = tuple(cfg['screen_shape'])
         self.device_name = device_name
         self.app_names = ['dummy']
+        self.screen = None
+        self.screenshot()
 
     def restart(self) -> None:
         pass
@@ -160,7 +162,20 @@ class DummyPhone:
         pass
 
     def screenshot(self) -> np.ndarray:
-        return np.ones((*self.screen_shape, 3)) * np.random.randint(2) * 255
+        if self.screen is None:
+            self.screen = np.zeros((*self.screen_shape, 3))
+            self.points = list(zip(np.random.randint(self.screen_shape[1], size=5),
+                                   np.random.randint(self.screen_shape[0], size=5)))
+            for p in self.points:
+                self.screen[p[1], p[0], 1] = 255
+        return self.screen
 
     def send_event(self, x: int, y: int, type: int) -> None:
+        if type != 0:
+            raise NotImplementedError()
         print(f'{datetime.now()}: dummy event sent to {self.device_name}')
+        for p in self.points:
+            if np.linalg.norm(np.array([x, y]) - np.array(p)) < 15:
+                self.screen = None
+                self.screenshot()
+                break

@@ -25,6 +25,9 @@ class EnvironmentCallbacks:
 
 
 class EnvironmentController(ABC):
+    def should_continue_episode(self) -> bool:
+        return True
+
     @abstractmethod
     def should_start_episode(self) -> bool:
         pass
@@ -43,11 +46,14 @@ class Environment(ABC):
         while self.should_start_episode():
             self.restart()
             self.on_episode_start(self.read_state())
-            while not self.is_finished():
-                last_state = self.read_state()
-                action = self.get_next_action(self.read_state())
+            cur_state = None
+            while not self.is_finished() and self.should_continue_episode():
+                last_state = cur_state or self.read_state()
+                action = self.get_next_action(last_state)
+                # add something to on_wait to make sure it is called, if not, call it here (but also write a warning)
                 reward = self.act(action, self.on_wait)
-                self.on_state_change(last_state, action, self.read_state(), reward)
+                cur_state = self.read_state()
+                self.on_state_change(last_state, action, cur_state, reward)
             self.on_episode_end()
 
     @abstractmethod
@@ -65,6 +71,9 @@ class Environment(ABC):
     @abstractmethod
     def act(self, action: Any, wait_action: Callable) -> float:
         pass
+
+    def should_continue_episode(self) -> bool:
+        return self.controller.should_continue_episode()
 
     def should_start_episode(self) -> bool:
         return self.controller.should_start_episode()

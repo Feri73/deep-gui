@@ -41,7 +41,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
         if new_weights is not None:
             print(f'{datetime.now()}: agent #{agent_id} is updating weights')
             # neater api for setting weights
-            self.agent.rl_model.set_weights(new_weights)
+            self.agent.replace_weights(new_weights)
 
     def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
         self.send_queue = send_queue
@@ -100,7 +100,7 @@ class MultiprocessRLCoordinator(RLCoordinator):
                 for queue_i, (_, send_queue) in enumerate([q for q in queues]):
                     print(f'{datetime.now()}: sending updated weights to #{queue_i} - {send_queue.qsize()}')
                     # neater api for getting weights
-                    send_queue.put(final_agent.rl_model.get_weights())
+                    send_queue.put(final_agent.rl_model.trainable_weights)
         for q1, q2 in all_queues:
             q1.close()
             q2.close()
