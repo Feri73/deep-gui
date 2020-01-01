@@ -1,37 +1,10 @@
 import os
-from typing import Callable, Dict, Any, List, Union
+from typing import Callable, Dict, Any, List, Tuple
 
-import numpy as np
 import tensorflow as tf
+import numpy as np
 
-# force it to be tf.function
-StateProcessor = Callable[[np.ndarray], np.ndarray]
 Config = Dict[str, Any]
-Gradient = Union[List[tf.Tensor], int]
-
-
-@tf.function
-def add_gradients(gradient1: Gradient, gradient2: Gradient) -> Gradient:
-    if gradient1 == 0:
-        return gradient2
-    if gradient2 == 0:
-        return gradient1
-    return [gradient1[i] + gradient2[i] for i in range(len(gradient1))]
-
-
-@tf.function
-def discount(gamma: tf.Tensor, array: tf.Tensor) -> tf.Tensor:
-    padding = tf.stack(
-        [tf.zeros(2, dtype=tf.int32), tf.stack([0, int(tf.shape(array)[1]) - 1]), tf.zeros(2, dtype=tf.int32)])
-    return tf.nn.conv1d(
-        tf.pad(array, padding, 'CONSTANT'),
-        tf.expand_dims(tf.expand_dims(
-            tf.map_fn(lambda i: gamma ** i, tf.range(tf.shape(array)[1], dtype=tf.float32)), axis=-1), axis=-1),
-        stride=1, padding='VALID')
-
-
-def batchify(val: Union[tf.Tensor, np.ndarray]) -> tf.Tensor:
-    return tf.expand_dims(val, axis=0)
 
 
 def run_parallel_command(command: str) -> None:
@@ -40,6 +13,19 @@ def run_parallel_command(command: str) -> None:
     else:
         command = f'{command} &'
     os.system(command)
+
+
+def count_elements(weights: Tuple[tf.Tensor, ...]) -> int:
+    return sum(w.shape.num_elements() for w in weights)
+
+
+def normalized_columns_initializer(std=1.0):
+    def _initializer(shape, dtype=None, partition_info=None):
+        out = np.random.randn(*shape).astype(np.float32)
+        out *= std / np.sqrt(np.square(out).sum(axis=0, keepdims=True))
+        return tf.constant(out)
+
+    return _initializer
 
 
 class MemVariable:

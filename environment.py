@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -17,7 +17,7 @@ class EnvironmentCallbacks:
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         pass
 
-    def on_episode_end(self) -> None:
+    def on_episode_end(self, premature: bool) -> None:
         pass
 
     def on_error(self) -> None:
@@ -38,23 +38,30 @@ class EnvironmentController(ABC):
 
 
 class Environment(ABC):
-    def __init__(self, callbacks: List[EnvironmentCallbacks], controller: EnvironmentController):
-        self.callbacks = callbacks
+    def __init__(self, controller: EnvironmentController):
+        self.callbacks = []
         self.controller = controller
+
+    def add_callback(self, callback: EnvironmentCallbacks) -> None:
+        self.callbacks += [callback]
 
     def start(self):
         while self.should_start_episode():
             self.restart()
-            self.on_episode_start(self.read_state())
-            cur_state = None
-            while not self.is_finished() and self.should_continue_episode():
-                last_state = cur_state or self.read_state()
+            cur_state = self.read_state()
+            self.on_episode_start(cur_state)
+            premature = False
+            while not self.is_finished():
+                if not self.should_continue_episode():
+                    premature = True
+                    break
+                last_state = cur_state
                 action = self.get_next_action(last_state)
                 # add something to on_wait to make sure it is called, if not, call it here (but also write a warning)
                 reward = self.act(action, self.on_wait)
                 cur_state = self.read_state()
                 self.on_state_change(last_state, action, cur_state, reward)
-            self.on_episode_end()
+            self.on_episode_end(premature)
 
     @abstractmethod
     def restart(self) -> None:
@@ -85,9 +92,9 @@ class Environment(ABC):
         for callback in self.callbacks:
             callback.on_episode_start(state)
 
-    def on_episode_end(self) -> None:
+    def on_episode_end(self, premature: bool) -> None:
         for callback in self.callbacks:
-            callback.on_episode_end()
+            callback.on_episode_end(premature)
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         for callback in self.callbacks:

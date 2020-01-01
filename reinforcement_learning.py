@@ -1,7 +1,8 @@
 # do not use eager execution when possible (use tf.function)
 # make this a library --> general rl library in tf 2 , maybe even make it in a way that tf parts of it are separated
 #     and its core is platform-independent
-
+import time
+from abc import ABC, abstractmethod
 # look everywhere to see if i am indirectly modifying stuff (instead of functional style)
 # instead of weights, use trainable weights (both in replacing and getting and generally everywhere)
 # 2 thigs to do --> check openai implementation to see if they clip the add_gradients
@@ -17,58 +18,34 @@
 #   if the above is true, then 1. i can use it to create better policyUsers 2. maybe if no paper says this,
 #   i can make a theory out of it
 # eager mode is very slow!!!
-import time
-from typing import Tuple, Any, Optional, List, Callable, Union
-
-from abc import ABC, abstractmethod
+from typing import Tuple, Any, Optional, List, Union
 
 import numpy as np
-import tensorflow as tf
-import tensorflow.keras as keras
 
 from environment import EnvironmentCallbacks, EnvironmentController
-from utils import Config, Gradient, add_gradients, MemVariable, MemList, batchify
+from utils import Config, MemVariable, MemList
 
-ModelStates = Tuple[Optional[tf.Tensor], ...]
-
-
-class StatelessModel(keras.layers.Layer):
-    def __init__(self, initial_model_states: ModelStates, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.initial_model_states = initial_model_states
-
-    def call(self, inputs: tf.Tensor, *, model_states: ModelStates):
-        return super().call(inputs)
-
-    # this should get a batch size as input
-    def get_initial_model_states(self) -> ModelStates:
-        return self.initial_model_states
+ModelStates = tuple
 
 
-class NoStateStatelessModel(StatelessModel):
-    def __init__(self, inner_model: keras.layers.Layer):
-        super().__init__(())
-        self.inner_model = inner_model
+class Episode:
+    def __init__(self, id: int):
+        self.id = id
+        self.finished = False
+        self.states_tb = []
+        self.actions_tb = []
+        self.rewards_tb = []
 
-    def call(self, *args, model_states: ModelStates):
-        return self.inner_model.call(*args), ()
+    def add_step(self, state_b, action_b, reward_b: List[float]):
+        self.states_tb += [state_b]
+        self.actions_tb += [action_b]
+        self.rewards_tb += [reward_b]
 
+    def __len__(self) -> int:
+        return len(self.states_tb)
 
-# this needs to be stateless
-class RLModel(StatelessModel, ABC):
-    @abstractmethod
-    def call(self, env_state: tf.Tensor, last_action: Optional[tf.Tensor], last_reward: Optional[tf.Tensor],
-             *, model_states: ModelStates) -> Tuple[tf.Tensor, Tuple[tf.Tensor, ...]]:
-        pass
-
-    @abstractmethod
-    def compute_loss(self, curr_env_state: Optional[tf.Tensor], action_history: tf.Tensor, reward_history: tf.Tensor,
-                     model_states_histories: ModelStates) -> tf.Tensor:
-        pass
-
-    @abstractmethod
-    def get_log_values(self) -> Tuple[Tuple[str, tf.Tensor], ...]:
-        pass
+    def __getitem__(self, item: int) -> Tuple[Any, Any, Any]:
+        return self.states_tb[item], self.actions_tb[item], self.rewards_tb[item]
 
 
 class RLCoordinator(ABC):
@@ -77,174 +54,166 @@ class RLCoordinator(ABC):
         pass
 
     @abstractmethod
-    def add_gradient(self, agent_id: int, gradient: Gradient) -> None:
+    def add_gradient(self, agent_id: int, gradient) -> None:
+        pass
+
+
+# this should be in a better file and maybe should be in included in RLAgent
+class RLModel(ABC):
+    @abstractmethod
+    def calc_next_action(self, env_states_bt, bef_actions_bt, bef_rewards_bt,
+                         bef_states_eb: ModelStates) -> Tuple[Any, ModelStates]:
+        pass
+
+    @abstractmethod
+    def calc_loss(self, actions_bt, rewards_bt, model_states_ebt: ModelStates, finished_b) -> Tuple[Any, tuple]:
+        pass
+
+    @abstractmethod
+    def get_default_action(self):
+        pass
+
+    @abstractmethod
+    def get_default_reward(self) -> float:
+        pass
+
+    @abstractmethod
+    def get_default_states(self) -> ModelStates:
         pass
 
 
 # rethink the functions (like iteration count should be input of start learning, etc.) or names and meaning of
 #   classes (like RLCoordinator is only about learning, while RLAgent plays too!)
 # this should inherit from Model
-# assumes fixed-length episodes
+# one way instead of adding gradients is to archive as many gradients as we want, and then loop on them and apply them
+# remember, if i set max_steps, this can be more efficient
+# i need much better nameing in this, tf1, and a2c. i should explicitly specify the if a value is a bef_ value or not
+#   in other words, e.g. if an action is the input or the output to the env_state
+# one option to add is to make gradients based on weight, so i can save weights if i know i'm gonna change it, compute
+#   (and even apply) gradient based on that weight, and then change back (even sometimes no change back cuz it's gonna
+#   get updated to the master's weights)
 class RLAgent(EnvironmentCallbacks, EnvironmentController):
-    def __init__(self, id: int, rl_model: RLModel, realize_action: Callable[[np.ndarray], Any],
-                 coordinator: Optional[RLCoordinator], optimizer: keras.optimizers.Optimizer, cfg: Config):
+    def __init__(self, id: int, rl_model: RLModel, coordinator: Optional[RLCoordinator], cfg: Config):
         self.id = id
         self.rl_model = rl_model
-        self.realize_action = realize_action
         self.coordinator = coordinator
-        self.optimizer = optimizer
 
-        self.rl_model_initial_states = self.rl_model.get_initial_model_states()
+        self.default_action = self.rl_model.get_default_action()
+        self.default_reward = self.rl_model.get_default_reward()
+        self.default_model_states = self.rl_model.get_default_states()
 
-        self.steps_per_gradient_update = cfg['steps_per_gradient_update']
-        self.steps_per_agent = cfg['steps_per_agent']
+        self.episodes_per_gradient_update = cfg['episodes_per_gradient_update']
+        self.episodes_per_agent = cfg['episodes_per_agent']
         self.max_steps_per_episode = cfg['max_steps_per_episode'] or np.inf
-        self.gradient_clip_max = cfg['gradient_clip_max']
+        self.late_gradient = cfg['late_gradient']
 
-        self.step = 0
+        self.current_episode_num = 0
         self.in_on_wait = False
-        self.last_tape_stop_recording = None
 
-        self.env_state_history = MemVariable(lambda: [])
-        self.action_history = MemVariable(lambda: [])
-        self.realized_action_history = MemVariable(lambda: [])
-        self.reward_history = MemVariable(lambda: [])
-        self.model_states_histories = MemVariable(lambda: [])
-        self.tape = MemVariable(lambda: tf.GradientTape())
-        self.episode_truncated = MemVariable(lambda: False)
-        self.episode_vars = MemList([self.env_state_history, self.action_history, self.realized_action_history,
-                                     self.reward_history, self.model_states_histories, self.tape,
-                                     self.episode_truncated])
+        self.episode = MemVariable(lambda: None)
+        self.model_states_teb = MemVariable(lambda: [tuple([state] for state in self.default_model_states)])
+        self.episode_vars = MemList([self.episode, self.model_states_teb])
 
-        self.total_gradient = MemVariable(lambda: 0)
+        self.total_gradient = None
 
-    def on_episode_gradient_computed(self, loss: tf.Tensor, gradient: Gradient, state_history: List[np.ndarray],
-                                     realized_action_history: List[Any], reward_history: List[float]) -> None:
+    def on_episode_gradient_computed(self, episode: Episode, gradient) -> None:
         pass
-
-    @tf.function
-    def apply_gradient(self, gradient: Gradient) -> None:
-        self.optimizer.apply_gradients(zip(gradient, self.rl_model.trainable_weights))
-
-    # this appears to be slow. find better solutions
-    # also i may be able to make this function @tf.function
-    def replace_weights(self, reference: Union['RLAgent', List[tf.Tensor]]) -> None:
-        if isinstance(reference, RLAgent):
-            ref_trainable_weights = reference.rl_model.trainable_weights
-        else:
-            ref_trainable_weights = reference
-        self_trainable_weights = self.rl_model.trainable_weights
-        for weight_i in range(len(self_trainable_weights)):
-            self_trainable_weights[weight_i].assign(ref_trainable_weights[weight_i])
-        # self.rl_model.set_weights(reference_agent.rl_model.get_weights())
-
-    def build_model(self, input_shape: tuple) -> None:
-        self.rl_model(tf.zeros(shape=input_shape), None, None, model_states=self.rl_model_initial_states)
-
-    def is_built(self) -> bool:
-        return self.rl_model.built
 
     # this is not exactly what arthur juliani does. cuz i do not continue anymore
     # why if i set max_steps to a lower value, the average of episode lengths also becomes lower?
-    # i think here > should be >=
     def should_continue_episode(self) -> bool:
-        self.episode_truncated.value = len(self.env_state_history.value) >= self.max_steps_per_episode
-        return not self.episode_truncated.value
+        # check
+        return len(self.episode.value) <= self.max_steps_per_episode
 
     def should_start_episode(self) -> bool:
-        res = self.step < self.steps_per_agent
-        # i should not make these calls here. I should have a clalback that says everything is done, and call there.
+        res = self.current_episode_num < self.episodes_per_agent
+        # i should not make these calls here. I should have a callback that says everything is done, and call there.
         if not res:
-            self.on_wait()
-            self.total_gradient.archive()
-            self.on_wait()
+            self.add_last_gradient()
+            self.compute_last_gradient()
+            self.coordinator.add_gradient(self.id, self.total_gradient)
         return res
 
-    def on_episode_start(self, state: np.ndarray) -> None:
-        self.step += 1
-        self.env_state_history.value += [state]
-        if self.tape.has_archive():
-            self.last_tape_stop_recording = self.tape.last_value().stop_recording()
-            self.last_tape_stop_recording.__enter__()
-        self.tape.value.__enter__()
-        # i think i should epxlicitly say here what to watch, otherwise
-        #   it may watch everything from all threads (search tho)
+    def on_episode_start(self, env_state) -> None:
+        self.current_episode_num += 1
+        self.episode.value = Episode(self.current_episode_num)
+        self.episode.value.add_step([env_state], [self.default_action], [self.default_reward])
 
-    def get_next_action(self, state: np.ndarray) -> Any:
-        action, model_states = self.rl_model(batchify(state),
-                                             batchify(self.action_history.value[-1])
-                                             if len(self.action_history.value) > 0 else None,
-                                             batchify(self.reward_history.value[-1])
-                                             if len(self.reward_history.value) > 0 else None,
-                                             model_states=tuple([s[-1] for s in
-                                                                 self.model_states_histories.value])
-                                             if len(self.model_states_histories.value) > 0
-                                             else self.rl_model.get_initial_model_states())
-        realized_action = self.realize_action(action.numpy())
+    def get_next_action(self, state) -> Any:
+        action_b, model_states_eb = self.calc_next_action(*self.episode.value[-1], self.model_states_teb.value[-1])
+        # generally, in functions that say get_*, i should not change anything. i should think of another method of
+        #   saving model_states
+        self.model_states_teb.value += [model_states_eb]
+        return action_b[0]
 
-        self.action_history.value += [action]
-        # remove this, in calling rl_model, simply ise historyes[-1], and then when calling compute_loss, use
-        #   tuple([tf.transpose(state, [1, 0, 2]) for state in zip(*a2_states)])
-        for model_state_i, model_state in enumerate(model_states):
-            if len(self.model_states_histories.value) == model_state_i:
-                self.model_states_histories.value += [[]]
-            self.model_states_histories.value[model_state_i] += [model_state]
-
-        return realized_action
-
-    # make gradient clipping optional
     def compute_last_gradient(self):
         if self.episode_vars.has_archive():
-            model_states_histories = self.model_states_histories.last_value()
-
-            self.last_tape_stop_recording.__exit__(None, None, None)
-            # why do i need the last dimension in action and reward histories?
-            loss = self.rl_model.compute_loss(
-                batchify(self.env_state_history.last_value()[-1])
-                if self.episode_truncated.last_value() else None,
-                batchify(self.action_history.last_value()),
-                batchify(self.reward_history.last_value()),
-                tuple([tf.transpose(measure_history, [1, 0, 2]) for measure_history in model_states_histories]))
-            self.tape.last_value().__exit__(None, None, None)
-            # this should use tf function. but how?
-            gradient = self.tape.last_value().gradient(loss, self.rl_model.trainable_weights)
-            if self.gradient_clip_max is not None:
-                gradient, _ = tf.clip_by_global_norm(gradient, self.gradient_clip_max)  # .5
-            self.on_episode_gradient_computed(loss, gradient, self.env_state_history.last_value(),
-                                              self.realized_action_history.last_value(),
-                                              self.reward_history.last_value())  # .18
-            self.total_gradient.value = add_gradients(self.total_gradient.value, gradient)  # .18
+            gradient = self.calc_gradient(self.episode.last_value(), self.model_states_teb.last_value())
+            self.on_episode_gradient_computed(self.episode.last_value(), gradient)
+            self.total_gradient = gradient + self.total_gradient
             self.episode_vars.reset_archive()
 
     def add_last_gradient(self):
-        if self.total_gradient.has_archive() and self.total_gradient.last_value() != 0:
-            self.coordinator.add_gradient(self.id, self.total_gradient.last_value())
-            self.total_gradient.reset_archive()
+        if self.total_gradient is not None and \
+                self.current_episode_num % self.episodes_per_gradient_update == int(self.late_gradient):
+            self.coordinator.add_gradient(self.id, self.total_gradient)
+            self.total_gradient = None
 
     def on_wait(self) -> None:
+        if not self.late_gradient:
+            return
         self.in_on_wait = True
-        if len(self.env_state_history.value) > 0:
-            with self.tape.value.stop_recording():
-                self.compute_last_gradient()
-                self.add_last_gradient()
-        else:
-            self.compute_last_gradient()
+        self.compute_last_gradient()
+        # add another option to remove this if
+        if len(self.episode.value) == self.max_steps_per_episode:
             self.add_last_gradient()
         self.in_on_wait = False
 
-    def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
-        self.env_state_history.value += [dst_state]
-        self.realized_action_history.value += [action]
-        self.reward_history.value += [reward]
+    def on_state_change(self, src_state, action, dst_state, reward) -> None:
+        self.episode.value.add_step([dst_state], [action], [reward])
 
-    def on_episode_end(self) -> None:
+    def on_episode_end(self, premature: bool) -> None:
+        self.episode.value.finished = not premature
         self.episode_vars.archive()
-        if self.step % self.steps_per_gradient_update == 0:
-            self.total_gradient.archive()
+        if not self.late_gradient:
+            self.compute_last_gradient()
+        self.add_last_gradient()
 
+    # remember, some of the children of this class (e.g. tf2 where it uses multiple tapes) need to override this
+    #   and add their own procedures
     def on_error(self) -> None:
-        self.tape.value.__exit__(None, None, None)
         self.episode_vars.reset_value()
         if self.in_on_wait and self.episode_vars.has_archive():
-            self.tape.last_value().__exit__(None, None, None)
             self.episode_vars.reset_archive()
+
+    @abstractmethod
+    def calc_next_action(self, env_state_b, action_b, reward_b,
+                         model_states_eb: ModelStates) -> Tuple[Any, ModelStates]:
+        pass
+
+    @abstractmethod
+    def set_generated_gradient_target(self, target: 'RLAgent'):
+        pass
+
+    @abstractmethod
+    def calc_gradient(self, episode: Episode, states_teb: List[ModelStates]):
+        pass
+
+    @abstractmethod
+    def apply_gradient(self, gradients) -> None:
+        pass
+
+    # here, target means reference! the one like whom we want to become
+    @abstractmethod
+    def add_replacement_target(self, target: 'RLAgent') -> None:
+        pass
+
+    @abstractmethod
+    def replace_parameter(self, target: Union['RLAgent', Any]) -> None:
+        pass
+
+    # is there a better way than including all these functions because i KNOW that there is a multiprocess that cannot
+    #   transfer rlagent over pickle?
+    @abstractmethod
+    def get_parameter(self):
+        pass

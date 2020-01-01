@@ -144,6 +144,10 @@ class Phone:
 class DummyPhone:
     def __init__(self, device_name: str, port: int, cfg: Config):
         self.screen_shape = tuple(cfg['screen_shape'])
+        self.configs = cfg['dummy_mode_configs']
+        self.point_nums = self.configs[0]
+        self.point_margin = self.configs[1]
+        self.click_margin = self.configs[2]
         self.device_name = device_name
         self.app_names = ['dummy']
         self.screen = None
@@ -163,19 +167,21 @@ class DummyPhone:
 
     def screenshot(self) -> np.ndarray:
         if self.screen is None:
-            self.screen = np.zeros((*self.screen_shape, 3))
-            self.points = list(zip(np.random.randint(self.screen_shape[1], size=5),
-                                   np.random.randint(self.screen_shape[0], size=5)))
+            self.screen = np.ones((*self.screen_shape, 3)) * 255.0
+            self.points = list(zip(np.random.randint(self.screen_shape[0], size=self.point_nums),
+                                   np.random.randint(self.screen_shape[1], size=self.point_nums)))
+            print(self.points)
             for p in self.points:
-                self.screen[p[1], p[0], 1] = 255
-        return self.screen
+                self.screen[max(p[0] - self.point_margin, 0): p[0] + self.point_margin + 1,
+                max(p[1] - self.point_margin, 0):p[1] + self.point_margin + 1, :2] = 0.0
+        return self.screen / 255.0
 
     def send_event(self, x: int, y: int, type: int) -> None:
         if type != 0:
             raise NotImplementedError()
         print(f'{datetime.now()}: dummy event sent to {self.device_name}')
         for p in self.points:
-            if np.linalg.norm(np.array([x, y]) - np.array(p)) < 15:
+            if np.linalg.norm(np.array([y, x]) - np.array(p)) < self.click_margin:
                 self.screen = None
                 self.screenshot()
                 break

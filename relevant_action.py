@@ -1,23 +1,21 @@
 import time as tm
-from typing import Tuple, Callable, Any, List
+import traceback
+from datetime import datetime
+from typing import Tuple, Callable, Any
 
 import numpy as np
 
-from environment import Environment, EnvironmentCallbacks, EnvironmentController
+from environment import Environment, EnvironmentController
 from phone import Phone
 from utils import Config
-
-from datetime import datetime
-
-import traceback
 
 
 # some parts of this should be factorized to a generalized class
 class RelevantActionEnvironment(Environment):
-    def __init__(self, callbacks: List[EnvironmentCallbacks], controller: EnvironmentController,
-                 phone: Phone, cfg: Config):
-        super(RelevantActionEnvironment, self).__init__(callbacks, controller)
+    def __init__(self, controller: EnvironmentController, phone: Phone, action2pos: Callable, cfg: Config):
+        super(RelevantActionEnvironment, self).__init__(controller)
         self.phone = phone
+        self.action2pos = action2pos
 
         self.steps_per_app = cfg['steps_per_app']
         self.steps_per_episode = cfg['steps_per_episode']
@@ -26,6 +24,8 @@ class RelevantActionEnvironment(Environment):
         self.app_start_wait_time = cfg['app_start_wait_time']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
+        self.pos_reward = cfg['pos_reward']
+        self.neg_reward = cfg['neg_reward']
         assert self.steps_per_app % self.steps_per_episode == 0
 
         self.step = 0
@@ -85,7 +85,9 @@ class RelevantActionEnvironment(Environment):
     # look at the phone (in dev mode) to make sure the click positions are correctly generated (realize action)
     #   and sent (env and phone (debug these two independently))
     # maybe instead of 2d discrete actions i can have continuous actions (read a3c paper for continuous actions)
-    def act(self, action: Tuple[int, int, int], wait_action: Callable[[], Any]) -> float:
+    def act(self, action: np.ndarray, wait_action: Callable[[], Any]) -> float:
+        action = self.action2pos(action)
+
         self.step += 1
         if self.step % self.steps_per_episode == 0:
             self.finished = True
@@ -102,7 +104,10 @@ class RelevantActionEnvironment(Environment):
             tm.sleep(self.action_wait_time - comp_time)
 
         cur_state = self.read_state()
-        reward = float(not self.are_states_equal(cur_state, last_state))
+        if self.are_states_equal(cur_state, last_state):
+            reward = self.neg_reward
+        else:
+            reward = self.pos_reward
 
         return reward
 

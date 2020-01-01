@@ -1,125 +1,132 @@
-from typing import Callable, Tuple, List
+from typing import Tuple
 
+import numpy as np
 import tensorflow as tf
-import tensorflow.keras as keras
 
-import utils
+from tf1 import ArrayTuple
+from reinforcement_learning import RLModel
 from utils import Config
 
-from reinforcement_learning import RLModel, StatelessModel, ModelStates
-
-PolicyUser = Callable[[tf.Tensor], tf.Tensor]
+TensorTuple = Tuple[tf.Tensor, ...]
 
 
-class A2CMetrics:
-    def __init__(self):
-        self.mean_policy_loss = keras.metrics.Mean(dtype=tf.float32)
-        self.mean_value_loss = keras.metrics.Mean(dtype=tf.float32)
-        self.mean_entropy = keras.metrics.Mean(dtype=tf.float32)
-        self.mean_advantage = keras.metrics.Mean(dtype=tf.float32)
-
-    def reset(self) -> None:
-        self.mean_policy_loss.reset_states()
-        self.mean_value_loss.reset_states()
-        self.mean_entropy.reset_states()
-        self.mean_advantage.reset_states()
-
-    def update(self, policy_loss, value_loss, entropy, advantage) -> None:
-        self.mean_policy_loss.update_state(policy_loss)
-        self.mean_value_loss.update_state(value_loss)
-        self.mean_entropy.update_state(entropy)
-        self.mean_advantage.update_state(advantage)
-
-    def get_values(self) -> Tuple[Tuple[str, tf.Tensor], ...]:
-        return (('Policy Loss:', self.mean_policy_loss.result()),
-                ('Value Loss:', self.mean_value_loss.result()),
-                ('Entropy:', self.mean_entropy.result()),
-                ('Advantage:', self.mean_advantage.result()))
-
-
+# add a procedure so that users can specify the logs
+# remember that here, policy_layer should produce logits, not probs
+# create this class in Keras
+# try to generalize it to continous space, and policy_user define its own gradient
+# this also assumes policy is a 1d thing (NOT considering time or batch) but some parts of the code do not use this
+#   assumption while some (in loss evaluation) does
+# add typings for layers (and also in other files add the missing types)
+# change the layers interface so that instead of inputting tuples, i can input the function
+#   arguments like a normal function
 class A2C(RLModel):
-    def __init__(self, process_layer: StatelessModel, actor_layer: StatelessModel, critic_layer: StatelessModel,
-                 policy_user: PolicyUser, cfg: Config):
-        process_init_states = process_layer.get_initial_model_states()
-        self.process_states_len = len(process_init_states)
-        actor_init_states = actor_layer.get_initial_model_states()
-        self.actor_states_len = len(actor_init_states)
-        critic_init_states = critic_layer.get_initial_model_states()
-
-        # is it going to be faster if i define the layers and input to the super's constructor here?
-        super().__init__(self.encode_model_states((None, None),
-                                                  process_init_states, actor_init_states, critic_init_states))
+    def __init__(self, process_layer, actor_layer, critic_layer, policy_user,
+                 actor_layer_output_shape: Tuple[int, ...], cfg: Config, default_action: int = 0,
+                 default_reward: float = 0.0, default_process_states: ArrayTuple = None,
+                 default_actor_states: ArrayTuple = None, default_critic_states: ArrayTuple = None):
         self.process_layer = process_layer
         self.actor_layer = actor_layer
         self.critic_layer = critic_layer
         self.policy_user = policy_user
-        self.gamma = tf.constant(cfg['gamma'])
+        self.actor_layer_output_shape = actor_layer_output_shape
+        self.gamma = cfg['gamma']
         self.value_loss_coeff = cfg['value_loss_coeff']
         self.entropy_loss_coeff = cfg['entropy_loss_coeff']
-        self.model_states_len = None
-        self.inner_metrics = A2CMetrics()
+
+        self.default_action = np.array(default_action)
+        self.default_reward = default_reward
+        self.default_process_states = () if default_process_states is None else default_process_states
+        self.default_actor_states = () if default_actor_states is None else default_actor_states
+        self.default_critic_states = () if default_critic_states is None else default_critic_states
 
     @staticmethod
-    def encode_model_states(self_states: ModelStates, process_states: ModelStates,
-                            actor_states: ModelStates, critic_states: ModelStates) -> ModelStates:
+    def encode_states(self_states: tuple, process_states: tuple, actor_states: tuple, critic_states: tuple) -> tuple:
         return (*self_states, *process_states, *actor_states, *critic_states)
 
-    def decode_model_states(self, model_states: ModelStates) -> \
-            Tuple[ModelStates, ModelStates, ModelStates, ModelStates]:
-        return model_states[:2], model_states[2:2 + self.process_states_len], \
-               model_states[2 + self.process_states_len:2 + self.process_states_len + self.actor_states_len], \
-               model_states[2 + self.process_states_len + self.actor_states_len:]
+    def decode_states(self, states_: TensorTuple) -> \
+            Tuple[TensorTuple, TensorTuple, TensorTuple, TensorTuple]:
+        return states_[:2], states_[2:2 + len(self.default_process_states)], \
+               states_[2 + len(self.default_process_states):
+                       2 + len(self.default_process_states) + len(self.default_actor_states)], \
+               states_[2 + len(self.default_process_states) + len(self.default_actor_states):]
 
-    @tf.function
-    def call(self, env_state, last_action, last_reward, model_states):
-        _, process_states, actor_states, critic_states = self.decode_model_states(model_states)
+    def eb2ebt(self, states: TensorTuple) -> TensorTuple:
+        return tuple(map(lambda x: tf.expand_dims(x, axis=1), states))
 
-        representation, process_states = self.process_layer(env_state, last_action, last_reward,
-                                                            model_states=process_states)
-        policy, actor_states = self.actor_layer(representation, model_states=actor_states)
-        value_estimate, critic_states = self.critic_layer(representation, model_states=critic_states)
+    # this should probably be in utils
+    # is should not use self.gamma, but i should convert it to tf.constant to avoid retrace in tf2 situations
+    #   there is also one later
+    # didn't test this (current test does not work with it)
+    def discount(self, array: tf.Tensor) -> tf.Tensor:
+        padding = tf.stack([tf.zeros(2, dtype=tf.int32), tf.stack([0, tf.shape(array)[1] - 1]),
+                            tf.zeros(2, dtype=tf.int32)])
+        return tf.nn.conv1d(
+            tf.pad(array, padding, 'CONSTANT'),
+            tf.expand_dims(tf.expand_dims(
+                tf.map_fn(lambda i: self.gamma ** i,
+                          tf.range(tf.cast(tf.shape(array)[1], tf.float32), dtype=tf.float32)), axis=-1), axis=-1),
+            stride=1, padding='VALID')
 
-        # i don't really need the stop_gradient here, but just in case i have it
-        return tf.stop_gradient(self.policy_user(tf.nn.softmax(policy))), \
-               self.encode_model_states((policy, value_estimate), process_states, actor_states, critic_states)
+    def calc_next_action(self, env_states_bt: tf.Tensor, bef_actions_bt: tf.Tensor, bef_rewards_bt: tf.Tensor,
+                         bef_model_states_eb: TensorTuple) -> Tuple[tf.Tensor, TensorTuple]:
+        _, bef_process_states_eb, bef_actor_states_eb, bef_critic_states_eb = self.decode_states(bef_model_states_eb)
+        representation_bt, process_states_eb = self.process_layer((env_states_bt, bef_actions_bt, bef_rewards_bt,
+                                                                   bef_process_states_eb))
+        policy_bt, actor_states_eb = self.actor_layer((representation_bt, bef_actor_states_eb))
+        value_estimate_bt, critic_states_eb = self.critic_layer((representation_bt, bef_critic_states_eb))
 
-    def get_log_values(self):
-        result = self.inner_metrics.get_values()
-        self.inner_metrics.reset()
-        return result
+        # remember, here i am supposed to return ebt, but for states that i do not use in loss, i am fakely generating
+        #   the t dimension. try to solve this.
+        return self.policy_user(tf.nn.softmax(policy_bt)), self.encode_states((policy_bt, value_estimate_bt),
+                                                                              self.eb2ebt(process_states_eb),
+                                                                              self.eb2ebt(actor_states_eb),
+                                                                              self.eb2ebt(critic_states_eb))
 
-    @tf.function
-    def compute_loss(self, curr_env_state, actions, rewards, model_states_histories):
-        rewards = tf.expand_dims(rewards, axis=-1)
-        if curr_env_state is None:
-            bootstrap_value = tf.zeros_like(rewards[:, -1])
-        else:
-            bootstrap_value = tf.stop_gradient(self(curr_env_state, actions[:, -1], rewards[:, -1, 0],
-                                                    model_states=tuple([model_state_history[:, -1]
-                                                                        for model_state_history in
-                                                                        model_states_histories]))[1][1])
-        bootstrap_value = tf.expand_dims(bootstrap_value, axis=1)
-        policies, value_estimates = self.decode_model_states(model_states_histories)[0]
+    def calc_loss(self, actions_bt: tf.Tensor, rewards_bt: tf.Tensor, model_states_ebt: TensorTuple,
+                  finished_b: tf.Tensor) -> Tuple[tf.Tensor, TensorTuple]:
+        rewards_bt = tf.expand_dims(rewards_bt, axis=-1)
+        policies_bt, value_estimates_bt = self.decode_states(model_states_ebt)[0]
+
+        # is this ok to call get_next_action here? how can i use an existing graph
+        bootstrap_value_b = tf.where(finished_b,
+                                     tf.zeros_like(rewards_bt[:, -1]),
+                                     tf.stop_gradient(value_estimates_bt[:, -1]))
+        bootstrap_value_bt = tf.expand_dims(bootstrap_value_b, axis=1)
+
+        actions_bt = tf.expand_dims(actions_bt, axis=-1)
+        policies_bt = policies_bt[:, :-1]
+        value_estimates_bt = value_estimates_bt[:, :-1]
 
         # with a breakpoint here make sure you are doing it right and all the ranks and indexings are correct
-        action_onehots = tf.one_hot(actions, tf.shape(policies)[2])[:, :, 0]
+        action_onehots_bt = tf.one_hot(actions_bt, policies_bt.shape[2])[:, :, 0]
 
-        augmented_rewards = tf.concat([rewards, bootstrap_value], axis=1)
-        augmented_value_estimates = tf.concat([value_estimates, bootstrap_value], axis=1)
+        augmented_rewards_bt = tf.concat([rewards_bt, bootstrap_value_bt], axis=1)
+        augmented_value_estimates_bt = tf.concat([value_estimates_bt, bootstrap_value_bt], axis=1)
 
-        discounted_rewards = utils.discount(self.gamma, augmented_rewards)[:, :-1]
+        discounted_rewards_bt = self.discount(augmented_rewards_bt)[:, :-1]
 
         # read about this and think why this is good
-        advantages = rewards + self.gamma * augmented_value_estimates[:, 1:] - augmented_value_estimates[:, :-1]
-        advantages = utils.discount(self.gamma, advantages)[:, :, 0]
+        advantages_bt = rewards_bt + self.gamma * augmented_value_estimates_bt[:, 1:] - \
+                        augmented_value_estimates_bt[:, :-1]
+        advantages_bt = self.discount(advantages_bt)[:, :, 0]
 
-        prob_logs = tf.nn.log_softmax(policies)
-        probs = tf.nn.softmax(policies)
-        responsible_prob_logs = tf.reduce_sum(prob_logs * action_onehots, axis=-1)
-        policy_loss = -tf.reduce_sum(responsible_prob_logs * tf.stop_gradient(advantages))
-        value_loss = tf.reduce_sum(tf.square(discounted_rewards - value_estimates))
-        entropy = -tf.reduce_sum(probs * prob_logs)
+        prob_logs_bt = tf.nn.log_softmax(policies_bt)
+        probs_bt = tf.nn.softmax(policies_bt)
+        responsible_prob_logs_bt = tf.reduce_sum(prob_logs_bt * action_onehots_bt, axis=-1)
+        policy_loss = -tf.reduce_sum(responsible_prob_logs_bt * tf.stop_gradient(advantages_bt))
+        # policy_loss = tf.reduce_sum(tf.square(rewards_bt - tf.reduce_sum(probs_bt * action_onehots_bt, axis=-1)))
+        value_loss = tf.reduce_sum(tf.square(discounted_rewards_bt - value_estimates_bt))
+        entropy = -tf.reduce_sum(probs_bt * prob_logs_bt)
 
-        self.inner_metrics.update(policy_loss, value_loss, entropy,
-                                  tf.reduce_mean(tf.reduce_mean(advantages, axis=-1)))
-        return policy_loss + self.value_loss_coeff * value_loss - self.entropy_loss_coeff * entropy
+        return policy_loss + self.value_loss_coeff * value_loss - self.entropy_loss_coeff * entropy, \
+               (policy_loss, value_loss, entropy, tf.reduce_mean(tf.reduce_mean(advantages_bt, axis=-1)))
+
+    def get_default_action(self) -> np.ndarray:
+        return self.default_action
+
+    def get_default_reward(self) -> float:
+        return self.default_reward
+
+    def get_default_states(self) -> ArrayTuple:
+        return self.encode_states((np.zeros(self.actor_layer_output_shape), np.array([0])),
+                                  self.default_process_states, self.default_actor_states, self.default_critic_states)
