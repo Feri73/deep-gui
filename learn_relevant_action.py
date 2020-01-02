@@ -23,6 +23,8 @@ from tf1 import TF1RLAgent, LazyGradient
 from utils import Config
 
 
+# test to make sure the action is correctly done and logged (what i see in
+#   tensorboard is exactly where the agent clicked)
 # even most of this file can be a part of framework for plug and play style (rapidly set a network and see results)
 # i have a lot of common code in here and test_doom.py think if these can be factorized
 # when putting this on github as a framework, add some examples, like non-deep learning, or synchronized a2c
@@ -177,6 +179,8 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 self.mean_lengths = []
                 self.logs = ()
 
+            # measure how much time these logs take, if too much, justt disable them for
+            #   everything except the test agent (the final agent)
             if self.log_screen:
                 env_state = episode.states_tb[0][0] * 255.0
                 action = action2pos(episode.actions_tb[1][0], original=True)
@@ -334,6 +338,7 @@ if dummy_mode:
     Phone = phone.DummyPhone
 else:
     Phone = phone.Phone
+# make these two optional
 tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
 tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
 tf.disable_v2_behavior()
