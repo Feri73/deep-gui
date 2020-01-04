@@ -127,9 +127,12 @@ class RelevantActionEnvironment(Environment):
     def on_error(self):
         super().on_error()
         # have a process that does something when this also throws exception
-        if self.phone.is_booted():
-            self.phone.open_app(self.phone.app_names[self.cur_app_index])
-            tm.sleep(self.app_start_wait_time)
+        try:
+            if self.phone.is_booted():
+                self.phone.open_app(self.phone.app_names[self.cur_app_index])
+                tm.sleep(self.app_start_wait_time)
+        except:
+            pass
         if not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
             try:
                 self.phone.restart()

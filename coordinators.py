@@ -1,7 +1,7 @@
 import multiprocessing as mp
 import threading as td
 from datetime import datetime
-from queue import Empty
+from queue import Empty, Full
 from typing import Tuple, List, Callable
 
 from environment import Environment
@@ -137,7 +137,12 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
                 for queue_i, (_, send_queue) in enumerate([q for q in queues]):
                     self.log(f'{datetime.now()}: sending updated '
                              f'weights to #{agent_ids[queue_i]} - {send_queue.qsize()}')
-                    send_queue.put(final_agent.get_parameter())
+                    # test this (not blocking when sending update) with obvious tasks (like ajuliani) to see if it
+                    #   creates any problem
+                    try:
+                        send_queue.put(final_agent.get_parameter(), block=self.block)
+                    except Full:
+                        pass
             if not self.exit_signal_sent and check_key_press() == 'q':
                 self.log(f'{datetime.now()}: sending exit signal to agents')
                 for _, send_queue in queues:

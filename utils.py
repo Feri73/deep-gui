@@ -1,6 +1,5 @@
 import os
 import sys
-import tty
 from typing import Callable, Dict, Any, List, Tuple, Optional
 
 import tensorflow as tf
@@ -9,6 +8,7 @@ import numpy as np
 if os.name == 'nt':
     import msvcrt
 else:
+    import tty
     import termios
     import fcntl
 
