@@ -59,7 +59,8 @@ class Phone:
     def is_booted(self):
         print(f'{datetime.now()}: checking boot status of {self.device_name}')
         try:
-            return self.adb('shell getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
+            # this 2s should be param probably
+            return self.adb('shell timeout 2s getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
         except subprocess.CalledProcessError:
             return False
 
@@ -69,6 +70,7 @@ class Phone:
             time.sleep(2)
 
     def restart(self):
+        print(f'{datetime.now()}: restarting {self.device_name}')
         self.adb('emu kill')
         while self.is_booted():
             time.sleep(1)
@@ -90,6 +92,7 @@ class Phone:
             # copy_tree(local_snapshot_path, ref_snapshot_path)
 
     def start_emulator(self, fresh: bool = False) -> None:
+        print(f'{datetime.now()}: starting emulator {self.device_name}')
         run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' +
                              (f' -no-cache' if fresh else ''))
         self.wait_for_start()
