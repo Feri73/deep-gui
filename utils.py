@@ -1,54 +1,10 @@
 import os
-import sys
-from typing import Callable, Dict, Any, List, Tuple, Optional
+from typing import Callable, Dict, Any, List, Tuple
 
-import tensorflow as tf
 import numpy as np
-
-if os.name == 'nt':
-    import msvcrt
-else:
-    import tty
-    import termios
-    import fcntl
+import tensorflow as tf
 
 Config = Dict[str, Any]
-
-
-def check_key_press() -> Optional[str]:
-    if os.name == 'nt':
-        return windows_check_key_press()
-    else:
-        return linux_check_key_press()
-
-
-def windows_check_key_press() -> Optional[str]:
-    if msvcrt.kbhit():
-        return msvcrt.getch().decode('ascii')
-    return None
-
-
-class TerminalBufferDisabler:
-    def __enter__(self):
-        self.fd = sys.stdin.fileno()
-        self.old_settings = termios.tcgetattr(self.fd)
-
-        fd = sys.stdin.fileno()
-        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old_settings)
-
-
-def linux_check_key_press():
-    with TerminalBufferDisabler():
-        tty.setraw(sys.stdin.fileno())
-        ch = sys.stdin.read(1)
-        if len(ch) == 1:
-            return ch
-        if len(ch) == 0:
-            return None
 
 
 def run_parallel_command(command: str) -> None:

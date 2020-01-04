@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import signal
 import threading as td
 from datetime import datetime
 from queue import Empty, Full
@@ -6,7 +7,7 @@ from typing import Tuple, List, Callable
 
 from environment import Environment
 from reinforcement_learning import RLCoordinator, RLAgent
-from utils import Config, check_key_press
+from utils import Config
 
 RLAgentCreator = Callable[[RLCoordinator], Tuple[Environment, RLAgent]]
 
@@ -36,7 +37,6 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
         self.block = block
         self.gradient_queue_size = config['gradient_queue_size']
         self.callbacks = []
-        self.exit_signal_sent = False
 
     def add_callback(self, callback: MultiCoordinatorCallbacks) -> None:
         self.callbacks += [callback]
@@ -52,14 +52,12 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
         while self.block or queue_size > 0:
             try:
                 new_weights = self.receive_queue.get(block=self.block)
-                if new_weights == 'exit':
-                    self.environment.stop()
                 queue_size -= 1
                 if self.block:
                     break
             except Empty:
                 pass
-        if new_weights is not None and new_weights != 'exit':
+        if new_weights is not None:
             self.log(f'{datetime.now()}: agent #{agent_id} is updating weights')
             self.agent.replace_parameter(new_weights)
             self.on_update_learner(self.agent.id)
@@ -67,11 +65,12 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
     def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
         self.send_queue = send_queue
         self.receive_queue = receive_queue
-        self.environment, self.agent = self.learning_agent_creators[agent_i](self)
+        environment, self.agent = self.learning_agent_creators[agent_i](self)
+        signal.signal(signal.SIGINT, lambda signum, frame: environment.stop())
         new_weights = self.receive_queue.get()
         self.agent.replace_parameter(new_weights)
         self.send_queue.put(f'id: {self.agent.id}')
-        self.environment.start()
+        environment.start()
         self.log(f'{datetime.now()}: agent #{self.agent.id}\'s environment finished')
         send_queue.put('done')
         while True:
@@ -81,6 +80,9 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
+        # both here and in the agents, i have to re-set the signal handler to the default
+        signal.signal(signal.SIGINT, lambda signum, frame: None)
+
         queues = []
         for agent_i in range(len(self.learning_agent_creators)):
             queues += [(mp.Queue(1 if self.block else self.gradient_queue_size),
@@ -143,11 +145,6 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
                         send_queue.put(final_agent.get_parameter(), block=self.block)
                     except Full:
                         pass
-            if not self.exit_signal_sent and check_key_press() == 'q':
-                self.log(f'{datetime.now()}: sending exit signal to agents')
-                for _, send_queue in queues:
-                    send_queue.put('exit')
-                self.exit_signal_sent = True
         for p in processes:
             p.join()
         for q1, q2 in all_queues:
