@@ -41,17 +41,24 @@ class Environment(ABC):
     def __init__(self, controller: EnvironmentController):
         self.callbacks = []
         self.controller = controller
+        self.stopped = False
 
     def add_callback(self, callback: EnvironmentCallbacks) -> None:
         self.callbacks += [callback]
 
+    def stop(self):
+        self.stopped = True
+
     def start(self):
-        while self.should_start_episode():
+        self.stopped = False
+        while self.should_start_episode() and not self.stopped:
             self.restart()
             cur_state = self.read_state()
             self.on_episode_start(cur_state)
             premature = False
             while not self.is_finished():
+                if self.stopped:
+                    return
                 if not self.should_continue_episode():
                     premature = True
                     break

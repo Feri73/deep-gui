@@ -13,6 +13,7 @@ import glob
 from utils import Config, run_parallel_command
 
 
+# prints here should be centralized in a logger
 class Phone:
     def __init__(self, device_name: str, port: int, cfg: Config):
         self.device_name = device_name
@@ -20,7 +21,6 @@ class Phone:
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
-        self.steps_per_boot_check = cfg['steps_per_boot_check']
         # self.screenshot_trials = cfg['screenshot_trials']
         self.avd_path = cfg['avd_path']
         apks_path = cfg['apks_path']
@@ -38,6 +38,23 @@ class Phone:
         if not as_bytes:
             return res.decode('utf-8')
         return res
+
+    def is_in_app(self, app_name: str, force_front: bool) -> bool:
+        try:
+            # add timeout here
+            res = self.adb('shell "dumpsys activity | grep TaskRecord"')
+            matches = re.findall(r'.*\* Recent .+: TaskRecord{.+#\d+ .+=(.+) .+StackId=(\d+).*}', res)
+            print(f'{datetime.now()}: top app of {self.device_name}: {matches[0][0]}')
+            if force_front:
+                return matches[0][0] == app_name
+            # test for when force_front = False
+            top_stack_id = matches[0][2]
+            for match in matches:
+                if match[0] == app_name and match[2] == top_stack_id:
+                    return True
+        except:
+            pass
+        return False
 
     def is_booted(self):
         print(f'{datetime.now()}: checking boot status of {self.device_name}')
@@ -122,8 +139,6 @@ class Phone:
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
 
     def screenshot(self) -> np.ndarray:
-        if self.step % self.steps_per_boot_check == 0 and not self.is_booted():
-            raise SystemError('phone is not booted.')
         self.step += 1
         screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
@@ -164,6 +179,9 @@ class DummyPhone:
 
     def open_app(self, app_name: str) -> None:
         pass
+
+    def is_in_app(self, app_name: str, force_front: bool) -> bool:
+        return True
 
     def screenshot(self) -> np.ndarray:
         if self.screen is None:

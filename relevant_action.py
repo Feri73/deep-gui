@@ -1,3 +1,4 @@
+import time
 import time as tm
 import traceback
 from datetime import datetime
@@ -26,6 +27,9 @@ class RelevantActionEnvironment(Environment):
         self.crop_size = cfg['crop_size']
         self.pos_reward = cfg['pos_reward']
         self.neg_reward = cfg['neg_reward']
+        self.steps_per_in_app_check = cfg['steps_per_in_app_check']
+        self.force_app_on_top = cfg['force_app_on_top']
+        self.in_app_check_trials = cfg['in_app_check_trials']
         assert self.steps_per_app % self.steps_per_episode == 0
 
         self.step = 0
@@ -77,8 +81,17 @@ class RelevantActionEnvironment(Environment):
         return np.linalg.norm(self.crop_state(s1) - self.crop_state(s2)) <= self.state_equality_epsilon
 
     def send_action(self, action: Tuple[int, int, int]):
-        self.phone.send_event(*action)
-        self.has_state_changed = True
+        trials = self.in_app_check_trials
+        while trials > 0:
+            if self.step % self.steps_per_in_app_check != 0 or \
+                    self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+                self.phone.send_event(*action)
+                self.has_state_changed = True
+                return
+            trials -= 1
+            if trials > 0:
+                time.sleep(1)
+        raise SystemError("invalid phone state.")
 
     # extend to actions other than click
     # remember to check if the phone is still in the correct app and other wise restart it
@@ -112,12 +125,16 @@ class RelevantActionEnvironment(Environment):
         return reward
 
     def on_error(self):
-        try:
-            self.phone.restart()
-        except:
-            self.phone.start_phone(True)
-        # have a process that does something when this also throws exception
         super().on_error()
-        self.phone.open_app(self.phone.app_names[self.cur_app_index])
-        tm.sleep(self.app_start_wait_time)
+        # have a process that does something when this also throws exception
+        if self.phone.is_booted():
+            self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            tm.sleep(self.app_start_wait_time)
+        if not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+            try:
+                self.phone.restart()
+            except:
+                self.phone.start_phone(True)
+            self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            tm.sleep(self.app_start_wait_time)
         self.has_state_changed = True

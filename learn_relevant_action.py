@@ -23,6 +23,7 @@ from tf1 import TF1RLAgent, LazyGradient
 from utils import Config
 
 
+# add a proper way to abort the learning (right now ctrl+c does not work)
 # test to make sure the action is correctly done and logged (what i see in
 #   tensorboard is exactly where the agent clicked)
 # even most of this file can be a part of framework for plug and play style (rapidly set a network and see results)
