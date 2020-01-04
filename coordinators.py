@@ -63,10 +63,10 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
             self.on_update_learner(self.agent.id)
 
     def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
+        signal.signal(signal.SIGINT, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt))
         self.send_queue = send_queue
         self.receive_queue = receive_queue
         environment, self.agent = self.learning_agent_creators[agent_i](self)
-        signal.signal(signal.SIGINT, lambda signum, frame: environment.stop())
         new_weights = self.receive_queue.get()
         self.agent.replace_parameter(new_weights)
         self.send_queue.put(f'id: {self.agent.id}')
@@ -80,9 +80,6 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
-        # both here and in the agents, i have to re-set the signal handler to the default
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         queues = []
         for agent_i in range(len(self.learning_agent_creators)):
             queues += [(mp.Queue(1 if self.block else self.gradient_queue_size),

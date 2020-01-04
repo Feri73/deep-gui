@@ -10,7 +10,7 @@ import numpy as np
 
 import glob
 
-from utils import Config, run_parallel_command, is_windows
+from utils import Config, run_parallel_command
 
 
 # prints here should be centralized in a logger
@@ -93,11 +93,8 @@ class Phone:
 
     def start_emulator(self, fresh: bool = False) -> None:
         print(f'{datetime.now()}: starting emulator {self.device_name}')
-        command = f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' + \
-                  (f' -no-cache' if fresh else '')
-        if not is_windows():
-            command = f'sh -c "trap \'\' INT TSTP; {command}"'
-        run_parallel_command(command)
+        run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' +
+                             (f' -no-cache' if fresh else ''))
         self.wait_for_start()
 
     def initial_setups(self) -> None:

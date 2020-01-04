@@ -47,6 +47,9 @@ class RelevantActionEnvironment(Environment):
             try:
                 super().start()
                 break
+            # add this in Environment class
+            except KeyboardInterrupt as ex:
+                raise ex
             except:
                 print(f'{datetime.now()}: exception in phone #{self.phone.device_name}:\n{traceback.format_exc()}')
                 self.on_error()
