@@ -81,7 +81,7 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
         # both here and in the agents, i have to re-set the signal handler to the default
-        signal.signal(signal.SIGINT, lambda signum, frame: None)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         queues = []
         for agent_i in range(len(self.learning_agent_creators)):

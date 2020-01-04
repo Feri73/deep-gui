@@ -7,8 +7,12 @@ import tensorflow as tf
 Config = Dict[str, Any]
 
 
+def is_windows() -> bool:
+    return os.name == 'nt'
+
+
 def run_parallel_command(command: str) -> None:
-    if os.name == 'nt':
+    if is_windows():
         command = f'start /min {command}'
     else:
         command = f'{command} &'
