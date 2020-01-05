@@ -20,6 +20,8 @@ class Phone:
         self.port = port
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
+        self.app_start_wait_time = cfg['app_start_wait_time']
+        self.app_exit_wait_time = cfg['app_exit_wait_time']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
         # self.screenshot_trials = cfg['screenshot_trials']
         self.avd_path = cfg['avd_path']
@@ -72,6 +74,8 @@ class Phone:
     def restart(self):
         print(f'{datetime.now()}: restarting {self.device_name}')
         self.adb('emu kill')
+        # this is not a good way of checking if the phone is off. because the phone may be already starting,
+        #    not completely booted tho. this means that i try to start the phone twice.
         while self.is_booted():
             time.sleep(1)
         self.start_phone(True)
@@ -104,9 +108,9 @@ class Phone:
         for apk_name in self.apk_names:
             self.adb(f'install -r "{os.path.abspath(apk_name)}"')
 
-        self.adb('shell settings put global window_animation_scale 0')
-        self.adb('shell settings put global transition_animation_scale 0')
-        self.adb('shell settings put global animator_duration_scale 0')
+        # self.adb('shell settings put global window_animation_scale 0')
+        # self.adb('shell settings put global transition_animation_scale 0')
+        # self.adb('shell settings put global animator_duration_scale 0')
 
     def get_app_name(self, apk_path: str) -> str:
         apk_path = os.path.abspath(apk_path)
@@ -129,6 +133,7 @@ class Phone:
 
     def close_app(self, app_name: str) -> None:
         self.adb(f'shell su root pm clear {app_name}')
+        time.sleep(self.app_exit_wait_time)
 
     def add_app_activity(self, app_name: str) -> None:
         dat = self.adb(f'shell dumpsys package {app_name} | grep -A1 "android.intent.action.MAIN:"')
@@ -140,6 +145,7 @@ class Phone:
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
+        time.sleep(self.app_start_wait_time)
 
     def screenshot(self) -> np.ndarray:
         self.step += 1

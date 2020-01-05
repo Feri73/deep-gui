@@ -22,7 +22,6 @@ class RelevantActionEnvironment(Environment):
         self.steps_per_episode = cfg['steps_per_episode']
         self.state_equality_epsilon = cfg['state_equality_epsilon']
         self.action_wait_time = cfg['action_wait_time']
-        self.app_start_wait_time = cfg['app_start_wait_time']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
         self.pos_reward = cfg['pos_reward']
@@ -63,7 +62,6 @@ class RelevantActionEnvironment(Environment):
             # if self.cur_app_index == 0:
             #     self.phone.load_snapshot('fresh')
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
-            tm.sleep(self.app_start_wait_time)
             self.has_state_changed = True
 
     def is_finished(self) -> bool:
@@ -133,7 +131,6 @@ class RelevantActionEnvironment(Environment):
         try:
             if self.phone.is_booted():
                 self.phone.open_app(self.phone.app_names[self.cur_app_index])
-                tm.sleep(self.app_start_wait_time)
         except:
             pass
         if not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
@@ -142,5 +139,4 @@ class RelevantActionEnvironment(Environment):
             except:
                 self.phone.start_phone(True)
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
-            tm.sleep(self.app_start_wait_time)
         self.has_state_changed = True
