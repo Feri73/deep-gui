@@ -47,8 +47,8 @@ class RelevantActionEnvironment(Environment):
                 super().start()
                 break
             # add this in Environment class
-            except KeyboardInterrupt as ex:
-                raise ex
+            except KeyboardInterrupt:
+                raise
             except:
                 print(f'{datetime.now()}: exception in phone #{self.phone.device_name}:\n{traceback.format_exc()}')
                 self.on_error()
@@ -127,15 +127,20 @@ class RelevantActionEnvironment(Environment):
 
     def on_error(self):
         super().on_error()
+        self.step -= 1
         # have a process that does something when this also throws exception
         try:
             if self.phone.is_booted():
                 self.phone.open_app(self.phone.app_names[self.cur_app_index])
+        except KeyboardInterrupt:
+            raise
         except:
             pass
         if not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
             try:
                 self.phone.restart()
+            except KeyboardInterrupt:
+                raise
             except:
                 self.phone.start_phone(True)
             self.phone.open_app(self.phone.app_names[self.cur_app_index])

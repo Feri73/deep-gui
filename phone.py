@@ -54,6 +54,8 @@ class Phone:
             for match in matches:
                 if match[0] == app_name and match[2] == top_stack_id:
                     return True
+        except KeyboardInterrupt:
+            raise
         except:
             pass
         return False
@@ -132,6 +134,7 @@ class Phone:
         self.adb('shell su root date ' + datetime.now().strftime('%m%d%H%M%Y.%S'))
 
     def close_app(self, app_name: str) -> None:
+        print(f'{datetime.now()}: closing {app_name} in {self.device_name}')
         self.adb(f'shell su root pm clear {app_name}')
         time.sleep(self.app_exit_wait_time)
 
@@ -142,6 +145,7 @@ class Phone:
         self.app_activity_dict[app_name] = activityRE.search(lines[1]).group(1)
 
     def open_app(self, app_name: str) -> None:
+        print(f'{datetime.now()}: opening {app_name} in {self.device_name}')
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
