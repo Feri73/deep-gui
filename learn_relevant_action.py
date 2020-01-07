@@ -149,6 +149,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
             self.policy_log_index = len(self.output_logs_e)
             self.output_logs_e += (policy_user.policy,)
 
+        # this should not be only trainable weights
         self.saver = tf.train.Saver(var_list=self.trainable_weights, max_to_keep=save_max_keep)
         if load_model:
             # test this
@@ -216,14 +217,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
             self.summary_writer.add_summary(summary, step)
             self.summary_writer.flush()
 
-    def log(self, log: str) -> None:
-        print(log)
-
-    def on_update_learner(self, learner_id: int) -> None:
-        print(f'{datetime.now()}: learner #{learner_id} got updated.')
-
     def on_update_target(self, learner_id: int) -> None:
-        print(f'{datetime.now()}: target updated by #{learner_id}.')
         self.target_updates += 1
         if self.target_updates % self.target_updates_per_save == 0:
             self.saver.save(self.session, self.save_to_path)
@@ -301,6 +295,20 @@ policy_users = [(most_probable_weighted_policy_user, None)]
 optimizers = [tf.train.AdamOptimizer, tf.train.RMSPropOptimizer]
 
 
+class LogCallbacks(MultiCoordinatorCallbacks):
+    def log(self, log: str) -> None:
+        print(log)
+
+    def on_update_learner(self, learner_id: int) -> None:
+        print(f'{datetime.now()}: learner #{learner_id} got updated.')
+
+    def on_update_target(self, learner_id: int) -> None:
+        print(f'{datetime.now()}: target updated by #{learner_id}.')
+
+
+log_callbacks = LogCallbacks()
+
+
 def create_agent(agent_id, is_target, coord):
     session = sess or tf.Session().__enter__()
 
@@ -316,9 +324,10 @@ def create_agent(agent_id, is_target, coord):
         environment = RelevantActionEnvironment(agent, Phone(f'device{agent_id}', 5554 + 2 * agent_id, cfg),
                                                 action2pos, cfg)
         environment.add_callback(agent)
-    if debug_mode and (is_target is True or isinstance(coord, UnSyncedMultiprocessRLCoordinator)):
-        coord.add_callback(agent)
+    if debug_mode and (is_target or isinstance(coord, UnSyncedMultiprocessRLCoordinator)):
+        coord.add_callback(log_callbacks)
     if is_target:
+        coord.add_callback(agent)
         agent.set_generated_gradient_target(agent)
     return environment, agent
 
@@ -368,7 +377,8 @@ def dummy_context():
 
 with dummy_context() if multiprocessing else tf.Session() as sess:
     if __name__ == '__main__':
-        while reset_summary and len(os.listdir(f'{summary_path}/agent0')) > 0:
+        while reset_summary and os.path.isdir(f'{summary_path}/agent0') and \
+                len(os.listdir(f'{summary_path}/agent0')) > 0:
             for agent_i in range(agents_count):
                 try:
                     for f in os.listdir(f'{summary_path}/agent{agent_i}'):
