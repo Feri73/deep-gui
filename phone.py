@@ -149,6 +149,7 @@ class Phone:
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
+        # here, if the message that says "it's only bringing an existing task to the front" appears, do not wait :|
         time.sleep(self.app_start_wait_time)
 
     def screenshot(self) -> np.ndarray:

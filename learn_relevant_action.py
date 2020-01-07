@@ -23,6 +23,17 @@ from tf1 import TF1RLAgent, LazyGradient
 from utils import Config
 
 
+# sometimes because of high computation load, it the click becomes long click
+# i think if my batch_size is 1, there is a risk of overfit
+# if everything is fucked up, online remove the device and create a new one
+# why many python learn_relevant_action.py ?
+# set the affinity and see if it helps performance
+# change the inter and intra op parallelism and see if it helps performance
+# for assessing changes in the screen, if wait until i reach stable screen (no change for 2 consecutive reads)
+#   and then continue. this way i can prevent the fact that wait_time is not enough for some situations
+# include a way to interact with the headless emulators on demand
+# have a monitoring panel, where e.g. i can add new agents or stop existing ones (can be part of
+#   coordinator and therefore part of the library) or i can change params of the task online
 # add a proper way to abort the learning (right now ctrl+c does not work)
 # test to make sure the action is correctly done and logged (what i see in
 #   tensorboard is exactly where the agent clicked)
@@ -357,11 +368,10 @@ def dummy_context():
 
 with dummy_context() if multiprocessing else tf.Session() as sess:
     if __name__ == '__main__':
-        while reset_summary and os.path.exists(summary_path):
-            try:
-                shutil.rmtree(summary_path)
-            except FileNotFoundError:
-                pass
+        while reset_summary and len(os.listdir(f'{summary_path}/agent0')) > 0:
+            for agent_i in range(agents_count):
+                for f in os.listdir(f'{summary_path}/agent{agent_i}'):
+                    os.unlink(f'{summary_path}/agent{agent_i}/{f}')
 
         learning_agent_creators = [partial(create_agent, i, False) for i in range(agents_count)]
         final_agent_creator = partial(create_agent, len(learning_agent_creators), True)
