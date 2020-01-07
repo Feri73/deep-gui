@@ -370,8 +370,11 @@ with dummy_context() if multiprocessing else tf.Session() as sess:
     if __name__ == '__main__':
         while reset_summary and len(os.listdir(f'{summary_path}/agent0')) > 0:
             for agent_i in range(agents_count):
-                for f in os.listdir(f'{summary_path}/agent{agent_i}'):
-                    os.unlink(f'{summary_path}/agent{agent_i}/{f}')
+                try:
+                    for f in os.listdir(f'{summary_path}/agent{agent_i}'):
+                        os.unlink(f'{summary_path}/agent{agent_i}/{f}')
+                except FileNotFoundError:
+                    pass
 
         learning_agent_creators = [partial(create_agent, i, False) for i in range(agents_count)]
         final_agent_creator = partial(create_agent, len(learning_agent_creators), True)
