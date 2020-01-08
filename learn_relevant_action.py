@@ -23,6 +23,15 @@ from tf1 import TF1RLAgent, LazyGradient
 from utils import Config
 
 
+# one problem is the exploration during training of relevant actions. if the exploration is not good, i need to
+#   find a way. one way is to have a very large batch size. another way is to use the state_finding algorithm
+#   (see the presentation) to find out if an action i take brings me to an already seen state, and do not epxlore it
+#   again.
+# when i have force_app_on_top set to True, i dont think the current approach brings the app to front if the front
+#   app is in the same task as the goal app
+# note that for different actions, different neural networks are required (like ,for click probably i need smaller CNN
+#     kernel than scroll)
+# add action for back button.
 # sometimes because of high computation load, it the click becomes long click
 # i think if my batch_size is 1, there is a risk of overfit
 # if everything is fucked up, online remove the device and create a new one
