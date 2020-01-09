@@ -36,6 +36,7 @@ class RelevantActionEnvironment(Environment):
         self.finished = False
         self.current_state = None
         self.has_state_changed = True
+        self.just_restarted = False
 
         self.phone.start_phone()
 
@@ -48,9 +49,7 @@ class RelevantActionEnvironment(Environment):
                 super().start()
                 break
             # add this in Environment class
-            except KeyboardInterrupt:
-                raise
-            except:
+            except Exception:
                 print(f'{datetime.now()}: exception in phone #{self.phone.device_name}:\n{traceback.format_exc()}')
                 self.on_error()
 
@@ -58,7 +57,10 @@ class RelevantActionEnvironment(Environment):
         self.finished = False
         if self.step % self.steps_per_app == 0:
             self.step = 0
-            self.phone.close_app(self.phone.app_names[self.cur_app_index])
+            try:
+                self.phone.close_app(self.phone.app_names[self.cur_app_index])
+            except Exception:
+                pass
             self.cur_app_index = (self.cur_app_index + 1) % len(self.phone.app_names)
             # if self.cur_app_index == 0:
             #     self.phone.load_snapshot('fresh')
@@ -89,6 +91,7 @@ class RelevantActionEnvironment(Environment):
                     self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
                 self.phone.send_event(*action)
                 self.has_state_changed = True
+                self.just_restarted = False
                 return
             trials -= 1
             if trials > 0:
@@ -129,20 +132,24 @@ class RelevantActionEnvironment(Environment):
     def on_error(self):
         super().on_error()
         self.step -= 1
-        # have a process that does something when this also throws exception
-        try:
-            if self.phone.is_booted():
-                self.phone.open_app(self.phone.app_names[self.cur_app_index])
-        except KeyboardInterrupt:
-            raise
-        except:
-            pass
-        if not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+
+        if self.just_restarted:
+            print(f'{datetime.now()}: seems like {self.phone.app_names[self.cur_app_index]} causes trouble. '
+                  f'removing it from phone #{self.phone.device_name}')
+            self.phone.app_names.remove(self.phone.app_names[self.cur_app_index])
+            self.cur_app_index = self.cur_app_index % len(self.phone.app_names)
+        else:
+            try:
+                if self.phone.is_booted():
+                    self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            except Exception:
+                pass
+        if self.just_restarted or \
+                not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
             try:
                 self.phone.restart()
-            except KeyboardInterrupt:
-                raise
-            except:
+            except Exception:
                 self.phone.start_phone(True)
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            self.just_restarted = not self.just_restarted
         self.has_state_changed = True

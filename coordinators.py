@@ -246,11 +246,8 @@ class SyncedMultiprocessRLCoordinator(RLCoordinator):
                         self.log(f'{datetime.now()}: sending updated '
                                  f'weights to #{agent_ids[queue_i]} - {send_queue.qsize()}')
                         send_queue.put(final_agent.get_parameter())
-                except KeyboardInterrupt:
-                    raise
-                # at least write the exception here :|
-                except:
-                    pass
+                except Exception as ex:
+                    print(f'An exception happened: {ex}\nignoring it')
         for q1, q2 in all_queues:
             q1.close()
             q2.close()

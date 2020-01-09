@@ -55,9 +55,7 @@ class Phone:
             for match in matches:
                 if match[0] == app_name and match[2] == top_stack_id:
                     return True
-        except KeyboardInterrupt:
-            raise
-        except:
+        except Exception:
             pass
         return False
 
@@ -90,7 +88,7 @@ class Phone:
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
         #         copy_tree(ref_snapshot_path, local_snapshot_path)
-        if os.path.exists(local_snapshot_path):
+        if os.path.exists(os.path.expanduser(local_snapshot_path)):
             # use -wipe-data instead
             self.load_snapshot('fresh')
         else:
@@ -112,7 +110,7 @@ class Phone:
         if self.install_apks:
             for apk_name in self.apk_names:
                 print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
-                self.adb(f'install -r "{os.path.abspath(apk_name)}"')
+                self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
 
         # self.adb('shell settings put global window_animation_scale 0')
         # self.adb('shell settings put global transition_animation_scale 0')
