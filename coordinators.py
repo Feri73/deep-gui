@@ -1,4 +1,4 @@
-import multiprocessing as mp
+import multiprocessing
 import signal
 import threading as td
 from datetime import datetime
@@ -62,7 +62,7 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
             self.agent.replace_parameter(new_weights)
             self.on_update_learner(self.agent.id)
 
-    def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
+    def run_agent(self, send_queue: multiprocessing.Queue, receive_queue: multiprocessing.Queue, agent_i: int) -> None:
         signal.signal(signal.SIGINT, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt))
         self.send_queue = send_queue
         self.receive_queue = receive_queue
@@ -80,6 +80,7 @@ class UnSyncedMultiprocessRLCoordinator(RLCoordinator):
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
+        mp = multiprocessing.get_context('spawn')
         queues = []
         for agent_i in range(len(self.learning_agent_creators)):
             queues += [(mp.Queue(1 if self.block else self.gradient_queue_size),
@@ -190,7 +191,7 @@ class SyncedMultiprocessRLCoordinator(RLCoordinator):
         self.agent.replace_parameter(new_weights)
         self.on_update_learner(self.agent.id)
 
-    def run_agent(self, send_queue: mp.Queue, receive_queue: mp.Queue, agent_i: int) -> None:
+    def run_agent(self, send_queue: multiprocessing.Queue, receive_queue: multiprocessing.Queue, agent_i: int) -> None:
         self.send_queue = send_queue
         self.receive_queue = receive_queue
         environment, self.agent = self.learning_agent_creators[agent_i](self)
@@ -206,6 +207,7 @@ class SyncedMultiprocessRLCoordinator(RLCoordinator):
 
     # do i have to specify device here (like cpu:0 or :1)
     def start_learning(self):
+        mp = multiprocessing.get_context('spawn')
         queues = []
         for agent_i in range(len(self.learning_agent_creators)):
             queues += [(mp.Queue(1), mp.Queue(1))]

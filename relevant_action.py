@@ -38,6 +38,9 @@ class RelevantActionEnvironment(Environment):
         self.has_state_changed = True
 
         self.phone.start_phone()
+        for app_name in self.phone.app_names:
+            self.phone.close_app(app_name)
+
         # better way for doing this
         np.random.shuffle(self.phone.app_names)
 
