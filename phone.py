@@ -27,6 +27,7 @@ class Phone:
         self.avd_path = cfg['avd_path']
         apks_path = cfg['apks_path']
         self.aapt_path = cfg['aapt_path']
+        self.install_apks = cfg['install_apks']
         self.app_activity_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
@@ -107,9 +108,11 @@ class Phone:
         # now that I've updated adb see if i can use this again
         # apks = ' '.join(self.apk_names)
         # self.adb(f'install-multi-package --instant "{apks}"')
-        for apk_name in self.apk_names:
-            print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
-            self.adb(f'install -r "{os.path.abspath(apk_name)}"')
+
+        if self.install_apks:
+            for apk_name in self.apk_names:
+                print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
+                self.adb(f'install -r "{os.path.abspath(apk_name)}"')
 
         # self.adb('shell settings put global window_animation_scale 0')
         # self.adb('shell settings put global transition_animation_scale 0')

@@ -394,7 +394,7 @@ with dummy_context() if multiprocessing else tf.Session() as sess:
             for agent_dir in os.listdir(summary_path):
                 try:
                     for f in os.listdir(f'{summary_path}/{agent_dir}'):
-                        os.unlink(f'{summary_path}/agent{agent_dir}')
+                        os.unlink(f'{summary_path}/{agent_dir}/{f}')
                 except FileNotFoundError:
                     pass
 
