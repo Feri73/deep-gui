@@ -115,6 +115,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.log_screen = cfg['log_screen']
         self.log_new_screen = cfg['log_new_screen']
         self.log_policy = cfg['log_policy']
+        self.grid_logs = cfg['grid_logs']
         self.save_to_path = cfg['save_to_path']
         save_max_keep = cfg['save_max_keep']
         self.debug_mode = cfg['debug_mode']
@@ -206,14 +207,16 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
             if self.log_screen:
                 env_state = episode.states_tb[0][0] * 255.0
                 action = action2pos(episode.actions_tb[1][0], original=True)
-                env_state = grid_image(env_state, env_state.shape[:-1] // np.array(self.action_shape), (0, 0, 0))
+                if self.grid_logs:
+                    env_state = grid_image(env_state, env_state.shape[:-1] // np.array(self.action_shape), (0, 0, 0))
                 env_state[action[1], action[0], :] = [255, 0, 0]
                 summary.value.add(tag='episodes', image=get_image_summary(env_state))
             if self.log_new_screen:
                 env_state = gradient.logs_e[self.new_screen_log_index][0, 0] * 255.0
                 action = action2pos(episode.actions_tb[1][0], original=False)
-                env_state = grid_image(env_state, np.array(self.screen_new_shape) // np.array(self.action_shape),
-                                       (0, 0, 0))
+                if self.grid_logs:
+                    env_state = grid_image(env_state, np.array(self.screen_new_shape) // np.array(self.action_shape),
+                                           (0, 0, 0))
                 env_state[action[1], action[0], :] = [255, 0, 0]
                 summary.value.add(tag='processed episode', image=get_image_summary(env_state))
             # this is only click policy. make it more general (IDK how tho :|)
