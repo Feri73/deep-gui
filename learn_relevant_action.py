@@ -388,10 +388,10 @@ with dummy_context() if multiprocessing else tf.Session() as sess:
     if __name__ == '__main__':
         while reset_summary and os.path.isdir(f'{summary_path}/agent0') and \
                 len(os.listdir(f'{summary_path}/agent0')) > 0:
-            for agent_i in range(agents_count):
+            for agent_dir in os.listdir(summary_path):
                 try:
-                    for f in os.listdir(f'{summary_path}/agent{agent_i}'):
-                        os.unlink(f'{summary_path}/agent{agent_i}/{f}')
+                    for f in os.listdir(f'{summary_path}/{agent_dir}'):
+                        os.unlink(f'{summary_path}/agent{agent_dir}')
                 except FileNotFoundError:
                     pass
 

@@ -108,6 +108,7 @@ class Phone:
         # apks = ' '.join(self.apk_names)
         # self.adb(f'install-multi-package --instant "{apks}"')
         for apk_name in self.apk_names:
+            print(f'installing {apk_name}')
             self.adb(f'install -r "{os.path.abspath(apk_name)}"')
 
         # self.adb('shell settings put global window_animation_scale 0')
