@@ -96,8 +96,8 @@ class LazyGradient:
 # not every scope needs evey part of this graph
 class TF1RLAgent(RLAgent):
     def __init__(self, id: int, rl_model: RLModel, coordinator: RLCoordinator, scope: str, session: tf.Session,
-                 env_state_shape: Tuple[int, ...], optimizer: tf.train.Optimizer, cfg: Config):
-        super().__init__(id, rl_model, coordinator, cfg)
+                 env_state_shape: Tuple[int, ...], optimizer: tf.train.Optimizer, cfg: Config, trainable: bool = True):
+        super().__init__(id, rl_model, coordinator, cfg, trainable)
         self.gradient_clip_max = cfg['gradient_clip_max']
         self.check_weight_for_gradient = cfg['check_weight_for_gradient']
         self.inherent_clip = cfg['inherent_clip']
@@ -124,36 +124,38 @@ class TF1RLAgent(RLAgent):
             self.output_actions_bt, self.output_model_states_ebt = \
                 rl_model.calc_next_action(self.input_env_states_bt, self.input_bef_actions_bt,
                                           self.input_bef_rewards_bt, self.inputs_bef_model_states_eb)
-            # note: the calc_loss in RLModel has one more element in model_state than actions and rewards
-            #   somehow document this
-            self.output_loss, self.output_logs_e = rl_model.calc_loss(self.input_bef_actions_bt[:, 1:],
-                                                                      self.input_bef_rewards_bt[:, 1:],
-                                                                      self.output_model_states_ebt,
-                                                                      self.input_episode_finished_b)
 
             self.trainable_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
 
-            self.output_gradients = tf.gradients(self.output_loss, self.trainable_weights)
-            if self.inherent_clip:
-                self.output_gradients = self.clip_gradient(self.output_gradients)
+            # note: the calc_loss in RLModel has one more element in model_state than actions and rewards
+            #   somehow document this
+            if trainable:
+                self.output_loss, self.output_logs_e = rl_model.calc_loss(self.input_bef_actions_bt[:, 1:],
+                                                                          self.input_bef_rewards_bt[:, 1:],
+                                                                          self.output_model_states_ebt,
+                                                                          self.input_episode_finished_b)
 
-            # what is a batter way that [0] in these 2 lines
-            #   (specify input_shape instead of specifying batch_size separately)
-            self.input_gradients = tuple(tf.placeholder(shape=weight.shape, dtype=tf.float32)
-                                                 for weight in self.trainable_weights)
-            self.input_target_weights = tuple(tf.placeholder(shape=weight.shape, dtype=tf.float32)
-                                              for weight in self.trainable_weights)
+                self.output_gradients = tf.gradients(self.output_loss, self.trainable_weights)
+                if self.inherent_clip:
+                    self.output_gradients = self.clip_gradient(self.output_gradients)
 
-            # use the output of clip for faster gradient norm computation
+                # what is a batter way that [0] in these 2 lines
+                #   (specify input_shape instead of specifying batch_size separately)
+                self.input_gradients = tuple(tf.placeholder(shape=weight.shape, dtype=tf.float32)
+                                             for weight in self.trainable_weights)
+                self.input_target_weights = tuple(tf.placeholder(shape=weight.shape, dtype=tf.float32)
+                                                  for weight in self.trainable_weights)
 
-            self.gradient_target_scope = None
-            self.op_apply_dynamic_gradients = None
-            self.op_apply_static_gradients = None
+                # use the output of clip for faster gradient norm computation
 
-            self.op_replace_dynamic_weights = {}
-            self.op_replace_static_weights = [
-                self.trainable_weights[weight_i].assign(self.input_target_weights[weight_i])
-                for weight_i in range(len(self.trainable_weights))]
+                self.gradient_target_scope = None
+                self.op_apply_dynamic_gradients = None
+                self.op_apply_static_gradients = None
+
+                self.op_replace_dynamic_weights = {}
+                self.op_replace_static_weights = [
+                    self.trainable_weights[weight_i].assign(self.input_target_weights[weight_i])
+                    for weight_i in range(len(self.trainable_weights))]
 
         # do i have optimizer weights in self.trainable_weights? this is performance-wise important in gradient
         #       computation but is critical ot not have in replacing weights of one scope to another

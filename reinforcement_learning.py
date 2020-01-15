@@ -93,10 +93,12 @@ class RLModel(ABC):
 #   (and even apply) gradient based on that weight, and then change back (even sometimes no change back cuz it's gonna
 #   get updated to the master's weights)
 class RLAgent(EnvironmentCallbacks, EnvironmentController):
-    def __init__(self, id: int, rl_model: RLModel, coordinator: Optional[RLCoordinator], cfg: Config):
+    def __init__(self, id: int, rl_model: RLModel, coordinator: Optional[RLCoordinator],
+                 cfg: Config, trainable: bool = True):
         self.id = id
         self.rl_model = rl_model
         self.coordinator = coordinator
+        self.trainable = trainable
 
         self.default_action = self.rl_model.get_default_action()
         self.default_reward = self.rl_model.get_default_reward()
@@ -147,6 +149,8 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
         return action_b[0]
 
     def compute_last_gradient(self):
+        if not self.trainable:
+            return
         if self.episode_vars.has_archive():
             gradient = self.calc_gradient(self.episode.last_value(), self.model_states_teb.last_value())
             self.on_episode_gradient_computed(self.episode.last_value(), gradient)
@@ -154,6 +158,8 @@ class RLAgent(EnvironmentCallbacks, EnvironmentController):
             self.episode_vars.reset_archive()
 
     def add_last_gradient(self):
+        if not self.trainable:
+            return
         if self.total_gradient is not None and \
                 self.current_episode_num % self.episodes_per_gradient_update == int(self.late_gradient):
             self.coordinator.add_gradient(self.id, self.total_gradient)

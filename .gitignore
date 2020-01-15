@@ -15,3 +15,5 @@
 !utils.py
 !tf1.py
 !app_downloader.py
+!test_relevant_action.py
+!relevant_action_base.py

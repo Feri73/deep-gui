@@ -28,12 +28,14 @@ class Phone:
         apks_path = cfg['apks_path']
         self.aapt_path = cfg['aapt_path']
         self.install_apks = cfg['install_apks']
+        self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.app_activity_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
         if not os.path.exists(f'tmp-{device_name}'):
             os.makedirs(f'tmp-{device_name}')
         self.step = 0
+        self.visited_activities = set()
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
@@ -41,6 +43,14 @@ class Phone:
         if not as_bytes:
             return res.decode('utf-8')
         return res
+
+    def maintain_current_activity(self):
+        try:
+            tmp = self.adb('shell "dumpsys window windows | grep mCurrentFocus"').strip()
+            match = re.match('mCurrentFocus=Window{.+ .+ (.+)}', tmp)
+            self.visited_activities.add(match[1])
+        except Exception as ex:
+            print(f'{datetime.now()}: exception happened while maintaining current activity {ex}')
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         try:
@@ -155,6 +165,8 @@ class Phone:
         time.sleep(self.app_start_wait_time)
 
     def screenshot(self) -> np.ndarray:
+        if self.maintain_visited_activities:
+            self.maintain_current_activity()
         self.step += 1
         screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
@@ -183,6 +195,7 @@ class DummyPhone:
         self.app_names = ['dummy']
         self.screen = None
         self.screenshot()
+        self.visited_activities = set()
 
     def restart(self) -> None:
         pass
