@@ -123,6 +123,8 @@ with open('setting.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
 dummy_mode = cfg['dummy_mode']
+inter_op_core_count = cfg['inter_op_core_count']
+intra_op_core_count = cfg['intra_op_core_count']
 agents_count = cfg['agents_count']
 screen_shape = tuple(cfg['screen_shape'])
 screen_new_shape = tuple(cfg['screen_new_shape'])
@@ -132,16 +134,21 @@ crop_size = cfg['crop_size']
 reset_summary = cfg['reset_summary']
 summary_path = cfg['summary_path']
 debug_mode = cfg['debug_mode']
+apks_path = cfg['apks_path']
 
 cfg['load_model'] = True
 cfg['maintain_visited_activities'] = True
+cfg['shuffle'] = False
 summary_path = cfg['summary_path'] = f'test_{summary_path}'
+apks_path = cfg['apks_path'] = f'test_{apks_path}'
 
 if dummy_mode:
     Phone = phone.DummyPhone
 else:
     Phone = phone.Phone
 # make these two optional
+tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
+tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
 tf.disable_v2_behavior()
 # should i set batch size to None or 1?
 input_shape = (*screen_shape, 3)

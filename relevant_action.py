@@ -29,6 +29,7 @@ class RelevantActionEnvironment(Environment):
         self.steps_per_in_app_check = cfg['steps_per_in_app_check']
         self.force_app_on_top = cfg['force_app_on_top']
         self.in_app_check_trials = cfg['in_app_check_trials']
+        shuffle = cfg['shuffle']
         assert self.steps_per_app % self.steps_per_episode == 0
 
         self.step = 0
@@ -40,8 +41,9 @@ class RelevantActionEnvironment(Environment):
 
         self.phone.start_phone()
 
-        # better way for doing this
-        np.random.shuffle(self.phone.app_names)
+        if shuffle:
+            # better way for doing this
+            np.random.shuffle(self.phone.app_names)
 
     def start(self):
         while True:

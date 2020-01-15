@@ -139,7 +139,9 @@ multiprocessing = cfg['multiprocessing']
 reset_summary = cfg['reset_summary']
 summary_path = cfg['summary_path']
 debug_mode = cfg['debug_mode']
+
 cfg['maintain_visited_activities'] = False
+cfg['shuffle'] = True
 if dummy_mode:
     Phone = phone.DummyPhone
 else:

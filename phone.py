@@ -46,11 +46,11 @@ class Phone:
 
     def maintain_current_activity(self):
         try:
-            tmp = self.adb('shell "dumpsys window windows | grep mCurrentFocus"').strip()
-            match = re.match('mCurrentFocus=Window{.+ .+ (.+)}', tmp)
+            tmp = self.adb('shell "dumpsys activity recents | grep intent"').strip()
+            match = re.match('.*cmp=(.+)}', tmp)
             self.visited_activities.add(match[1])
         except Exception as ex:
-            print(f'{datetime.now()}: exception happened while maintaining current activity {ex}')
+            print(f'{datetime.now()}: exception happened while maintaining current activity -> {ex}')
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         try:
@@ -147,7 +147,8 @@ class Phone:
 
     def close_app(self, app_name: str) -> None:
         print(f'{datetime.now()}: closing {app_name} in {self.device_name}')
-        self.adb(f'shell su root pm clear {app_name}')
+        # self.adb(f'shell su root pm clear {app_name}')
+        self.adb(f'shell am force-stop {app_name}')
         time.sleep(self.app_exit_wait_time)
 
     def add_app_activity(self, app_name: str) -> None:
