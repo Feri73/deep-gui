@@ -118,9 +118,15 @@ class Phone:
         # self.adb(f'install-multi-package --instant "{apks}"')
 
         if self.install_apks:
-            for apk_name in self.apk_names:
-                print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
-                self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
+            for apk_name, app_name in [_ for _ in zip(self.apk_names, self.app_names)]:
+                try:
+                    print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
+                    self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
+                except Exception:
+                    print(f'{datetime.now()}: couldn\'t install {apk_name}. removing it')
+                    self.apk_names.remove(apk_name)
+                    self.app_names.remove(app_name)
+
 
         # self.adb('shell settings put global window_animation_scale 0')
         # self.adb('shell settings put global transition_animation_scale 0')

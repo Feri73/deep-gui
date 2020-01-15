@@ -80,6 +80,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
 
         if trainable:
             self.output_logs_e += (tf.linalg.global_norm(self.trainable_weights),
+                                   # this re-clipping is a problem when inherent is true
                                    tf.linalg.global_norm(self.clip_gradient(self.output_gradients)),
                                    tf.reduce_max(policy_user.policy))
 
