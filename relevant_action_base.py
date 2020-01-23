@@ -6,10 +6,12 @@ import matplotlib.cm as cm
 import numpy as np
 import scipy.misc
 import tensorflow as tf
+from PIL import Image, ImageDraw
 
 from actor_critic import A2C
 from coordinators import MultiCoordinatorCallbacks
-from reinforcement_learning import RLCoordinator, Episode, RLAgent
+from reinforcement_learning import RLCoordinator, Episode
+from relevant_action import RelevantActionEnvironment
 from screen_parsing import ScreenEncoder, PolicyGenerator, ValueEstimator
 from tf1 import TF1RLAgent, LazyGradient
 from utils import Config
@@ -47,6 +49,9 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.debug_mode = cfg['debug_mode']
         self.steps_per_log = cfg['steps_per_log']
         self.target_updates_per_save = cfg['target_updates_per_save']
+        self.local_change_size = cfg['local_change_size']
+        self.crop_top_left = cfg['crop_top_left']
+        self.crop_size = cfg['crop_size']
         conv_kernel_sizes = cfg['conv_kernel_sizes']
         conv_filter_nums = cfg['conv_filter_nums']
         conv_stride_sizes = cfg['conv_stride_sizes']
@@ -63,6 +68,8 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.logs = ()
 
         self.log_step = 0
+        self.last_env_state = None
+        self.last_action = None
 
         action_tensor_shape = (*action_shape, action_type_count)
 
@@ -139,6 +146,16 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 self.mean_lengths = []
                 self.logs = ()
 
+            if self.last_env_state is not None:
+                global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0])
+                                             - RelevantActionEnvironment.crop_state(self, self.last_env_state))
+                local_diff = np.linalg.norm(
+                    RelevantActionEnvironment.
+                    crop_to_local(self, RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0]),
+                                  self.last_action)
+                    - RelevantActionEnvironment.
+                    crop_to_local(self, RelevantActionEnvironment.crop_state(self, self.last_env_state),
+                                  self.last_action))
             # measure how much time these logs take, if too much, justt disable them for
             #   everything except the test agent (the final agent)
             if self.log_screen:
@@ -146,7 +163,10 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 action = self.action2pos(episode.actions_tb[1][0], original=True)
                 if self.grid_logs:
                     env_state = grid_image(env_state, env_state.shape[:-1] // np.array(self.action_shape), (0, 0, 0))
-                env_state[action[1], action[0], :] = [255, 0, 0]
+                env_state = show_local_border(env_state, (self.local_change_size,) * 2, action)
+                env_state[max(0, action[1] - 5):action[1] + 5, max(0, action[0] - 5):action[0] + 5] = [255, 0, 0]
+                if self.last_env_state is not None:
+                    env_state = self.add_diff_texts(env_state, global_diff, local_diff)
                 summary.value.add(tag='episodes', image=get_image_summary(env_state))
             if self.log_new_screen:
                 env_state = gradient.logs_e[self.new_screen_log_index][0, 0] * 255.0
@@ -156,7 +176,14 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 if self.grid_logs:
                     env_state = grid_image(env_state, np.array(self.screen_new_shape) // np.array(self.action_shape),
                                            (0, 0, 0))
+                env_state = show_local_border(env_state,
+                                              (self.local_change_size * self.screen_new_shape[0] //
+                                               episode.states_tb[0][0].shape[0],
+                                               self.local_change_size * self.screen_new_shape[1] //
+                                               episode.states_tb[0][0].shape[1]), action)
                 env_state[action[1], action[0], :] = [255, 0, 0]
+                if self.last_env_state is not None:
+                    env_state = self.add_diff_texts(env_state, global_diff, local_diff)
                 summary.value.add(tag='processed episode', image=get_image_summary(env_state))
             # this is only click policy. make it more general (IDK how tho :|)
             if self.log_policy:
@@ -167,6 +194,17 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
 
             self.summary_writer.add_summary(summary, step)
             self.summary_writer.flush()
+
+            self.last_env_state = episode.states_tb[0][0]
+            self.last_action = self.action2pos(episode.actions_tb[1][0], original=True)
+
+    def add_diff_texts(self, image: np.ndarray, global_diff: float, local_diff: float) -> np.ndarray:
+        image = image.copy()
+        image = Image.fromarray(np.uint8(image))
+        draw = ImageDraw.Draw(image)
+        draw.text((0, 0), f'global: {global_diff}', (255, 0, 0))
+        draw.text((0, 16), f'local: {local_diff}', (0, 255, 0))
+        return np.array(image)
 
     def log_episode(self, episode: Episode) -> None:
         self.log_step += 1
@@ -230,6 +268,19 @@ def grid_image(image: np.ndarray, grid_size: Tuple[int, int], color: Tuple[int, 
         image[i] = color
     for j in range(0, image.shape[1], grid_size[1]):
         image[:, j] = color
+    return image
+
+
+def show_local_border(image: np.ndarray, local_size: Tuple[int, int], action: Tuple[int, int, int]) -> np.ndarray:
+    image = image.copy()
+    image[max(0, action[1] - local_size[1] // 2):action[1] + local_size[1] // 2,
+    max(0, action[0] - local_size[0] // 2)] = [0, 255, 0]
+    image[max(0, action[1] - local_size[1] // 2):action[1] + local_size[1] // 2,
+    min(image.shape[1] - 1, action[0] + local_size[0] // 2)] = [0, 255, 0]
+    image[max(0, action[1] - local_size[1] // 2),
+    max(0, action[0] - local_size[0] // 2):action[0] + local_size[0] // 2] = [0, 255, 0]
+    image[min(image.shape[0] - 1, action[1] + local_size[1] // 2),
+    max(0, action[0] - local_size[0] // 2):action[0] + local_size[0] // 2] = [0, 255, 0]
     return image
 
 
