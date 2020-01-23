@@ -82,8 +82,7 @@ class MonkeyAgent(RLAgent):
 
 def base_agent_creator(agent_id):
     return base.Agent(agent_id, None, None, base.most_probable_weighted_policy_user, action2pos,
-                      action_shape, None, tf.Session().__enter__(), f'global', input_shape, False, cfg)
-
+                      action_shape, 1.0, tf.Session().__enter__(), f'global', input_shape, False, cfg)
 
 def monkey_agent_creator(agent_id):
     return MonkeyAgent(agent_id, cfg)

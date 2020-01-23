@@ -27,7 +27,7 @@ class ScreenEncoder:
         # add an option for grayscale
         # before i had to /255.0 here but now i don't. why's that? make sure the input to the network is in (0, 1)
         hidden = tf.image.resize(
-            tf.image.crop_to_bounding_box(tf.cast(env_states[0], tf.float32),
+            tf.image.crop_to_bounding_box(tf.image.rgb_to_grayscale(tf.cast(env_states[0], tf.float32)),
                                           self.crop_top_left[0], self.crop_top_left[1],
                                           self.crop_size[0], self.crop_size[1]), self.screen_new_shape)
         self.processed_screen = tf.expand_dims(hidden, axis=0)

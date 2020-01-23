@@ -150,6 +150,8 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 summary.value.add(tag='episodes', image=get_image_summary(env_state))
             if self.log_new_screen:
                 env_state = gradient.logs_e[self.new_screen_log_index][0, 0] * 255.0
+                if env_state.shape[-1] == 1:
+                    env_state = np.concatenate([env_state] * 3, axis=-1)
                 action = self.action2pos(episode.actions_tb[1][0], original=False)
                 if self.grid_logs:
                     env_state = grid_image(env_state, np.array(self.screen_new_shape) // np.array(self.action_shape),

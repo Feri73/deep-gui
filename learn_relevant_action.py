@@ -79,7 +79,7 @@ import relevant_action_base as base
 # maybe actor critic is not the best option here. look into q learning and REINFORCE
 
 
-policy_users = [(base.most_probable_weighted_policy_user, None)]
+policy_users = [(base.most_probable_weighted_policy_user, 1.0)]
 optimizers = [tf.train.AdamOptimizer, tf.train.RMSPropOptimizer]
 
 
