@@ -1,4 +1,5 @@
 import os
+import time
 from io import BytesIO
 from typing import Tuple, Optional, Callable
 
@@ -52,9 +53,11 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.local_change_size = cfg['local_change_size']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
+        self.contrast_alpha = cfg['contrast_alpha']
         conv_kernel_sizes = cfg['conv_kernel_sizes']
         conv_filter_nums = cfg['conv_filter_nums']
         conv_stride_sizes = cfg['conv_stride_sizes']
+        conv_maxpool_sizes = cfg['conv_maxpool_sizes']
         deconv_kernel_sizes = cfg['deconv_kernel_sizes']
         deconv_filter_nums = cfg['deconv_filter_nums']
         deconv_output_shapes = cfg['deconv_output_shapes']
@@ -74,8 +77,8 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         action_tensor_shape = (*action_shape, action_type_count)
 
         with tf.variable_scope(scope):
-            screen_encoder = ScreenEncoder(crop_top_left, crop_size, self.screen_new_shape,
-                                           conv_kernel_sizes, conv_filter_nums, conv_stride_sizes)
+            screen_encoder = ScreenEncoder(crop_top_left, crop_size, self.screen_new_shape, self.contrast_alpha,
+                                           conv_kernel_sizes, conv_filter_nums, conv_stride_sizes, conv_maxpool_sizes)
             policy_user = PolicyUser(policy_user)
             rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, deconv_kernel_sizes,
                                                            deconv_filter_nums, deconv_output_shapes),
@@ -226,7 +229,12 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
     def on_update_target(self, learner_id: int) -> None:
         self.target_updates += 1
         if self.target_updates % self.target_updates_per_save == 0:
-            self.saver.save(self.session, self.save_to_path)
+            while True:
+                try:
+                    self.saver.save(self.session, self.save_to_path)
+                    break
+                except Exception:
+                    time.sleep(1)
 
     def on_episode_end(self, premature: bool) -> None:
         if self.debug_mode:
@@ -262,6 +270,7 @@ def policy2pos(action: np.ndarray, screen_new_shape: Tuple[int, ...],
     return x, y, type
 
 
+# this works incorrectly for original screen because it does not take crop into account
 def grid_image(image: np.ndarray, grid_size: Tuple[int, int], color: Tuple[int, int, int]) -> np.ndarray:
     image = image.copy()
     for i in range(0, image.shape[0], grid_size[0]):
@@ -286,6 +295,31 @@ def show_local_border(image: np.ndarray, local_size: Tuple[int, int], action: Tu
 
 def most_probable_weighted_policy_user(policy: tf.Tensor) -> tf.Tensor:
     return tf.argmax(tf.distributions.Multinomial(1.0, probs=policy).sample(), axis=-1)
+
+
+def least_probable_weighted_policy_user(policy: tf.Tensor) -> tf.Tensor:
+    probs = 1 / policy
+    probs = probs / tf.reduce_sum(probs, axis=-1)
+    return tf.argmax(tf.distributions.Multinomial(1.0, probs=probs).sample(), axis=-1)
+
+
+def least_certain_weighted_policy_user(policy: tf.Tensor) -> tf.Tensor:
+    probs = 1 / tf.abs(.5 - policy)
+    probs = probs / tf.reduce_sum(probs, axis=-1)
+    return tf.argmax(tf.distributions.Multinomial(1.0, probs=probs).sample(), axis=-1)
+
+
+# for using this, i have to change the v based on whether the most certain is >.5 or <.5
+def most_certain_weighted_policy_user(policy: tf.Tensor) -> tf.Tensor:
+    probs = tf.abs(.5 - policy)
+    probs = probs / tf.reduce_sum(probs, axis=-1)
+    return tf.argmax(tf.distributions.Multinomial(1.0, probs=probs).sample(), axis=-1)
+
+
+def random_policy_user(policy: tf.Tensor) -> tf.Tensor:
+    return tf.argmax(
+        tf.distributions.Multinomial(1.0, probs=tf.ones_like(policy) /
+                                                tf.cast(tf.shape(policy)[-1], tf.float32)).sample(), axis=-1)
 
 
 def remove_summaries(summary_path: str, reset_summary: bool) -> None:

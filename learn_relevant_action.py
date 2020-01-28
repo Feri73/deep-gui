@@ -1,5 +1,5 @@
 import contextlib
-import os
+import numpy as np
 import random
 from datetime import datetime
 from functools import partial
@@ -11,6 +11,7 @@ import phone
 from coordinators import UnSyncedMultiprocessRLCoordinator, MultithreadRLCoordinator, MultiCoordinatorCallbacks
 from relevant_action import RelevantActionEnvironment
 import relevant_action_base as base
+
 
 # one problem is the exploration during training of relevant actions. if the exploration is not good, i need to
 #   find a way. one way is to have a very large batch size. another way is to use the state_finding algorithm
@@ -79,10 +80,6 @@ import relevant_action_base as base
 # maybe actor critic is not the best option here. look into q learning and REINFORCE
 
 
-policy_users = [(base.most_probable_weighted_policy_user, 1.0)]
-optimizers = [tf.train.AdamOptimizer, tf.train.RMSPropOptimizer]
-
-
 class LogCallbacks(MultiCoordinatorCallbacks):
     def log(self, log: str) -> None:
         print(log)
@@ -139,9 +136,21 @@ multiprocessing = cfg['multiprocessing']
 reset_summary = cfg['reset_summary']
 summary_path = cfg['summary_path']
 debug_mode = cfg['debug_mode']
+value_estimator_values = cfg['value_estimator_values']
 
 cfg['maintain_visited_activities'] = False
 cfg['shuffle'] = True
+
+policy_users = [
+    (base.most_probable_weighted_policy_user, value_estimator_values[0]),
+    (base.least_certain_weighted_policy_user, value_estimator_values[1]),
+    (base.random_policy_user, value_estimator_values[2]),
+    (base.most_certain_weighted_policy_user, value_estimator_values[3]),
+    (base.least_probable_weighted_policy_user, value_estimator_values[4])
+]
+policy_users = [p for p in policy_users if p[1] < np.inf]
+optimizers = [tf.train.AdamOptimizer, tf.train.RMSPropOptimizer]
+
 if dummy_mode:
     Phone = phone.DummyPhone
 else:

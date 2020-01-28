@@ -81,8 +81,8 @@ class MonkeyAgent(RLAgent):
 
 
 def base_agent_creator(agent_id):
-    return base.Agent(agent_id, None, None, base.most_probable_weighted_policy_user, action2pos,
-                      action_shape, 1.0, tf.Session().__enter__(), f'global', input_shape, False, cfg)
+    return base.Agent(agent_id, None, None, base.most_probable_weighted_policy_user, action2pos, action_shape,
+                      value_estimator_values[0], tf.Session().__enter__(), f'global', input_shape, False, cfg)
 
 def monkey_agent_creator(agent_id):
     return MonkeyAgent(agent_id, cfg)
@@ -133,6 +133,7 @@ crop_size = cfg['crop_size']
 reset_summary = cfg['reset_summary']
 summary_path = cfg['summary_path']
 debug_mode = cfg['debug_mode']
+value_estimator_values = cfg['value_estimator_values']
 apks_path = cfg['apks_path']
 
 cfg['load_model'] = True

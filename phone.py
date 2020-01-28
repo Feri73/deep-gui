@@ -127,7 +127,6 @@ class Phone:
                     self.apk_names.remove(apk_name)
                     self.app_names.remove(app_name)
 
-
         # self.adb('shell settings put global window_animation_scale 0')
         # self.adb('shell settings put global transition_animation_scale 0')
         # self.adb('shell settings put global animator_duration_scale 0')
@@ -195,14 +194,18 @@ class DummyPhone:
     def __init__(self, device_name: str, port: int, cfg: Config):
         self.screen_shape = tuple(cfg['screen_shape'])
         self.configs = cfg['dummy_mode_configs']
-        self.point_nums = self.configs[0]
-        self.point_margin = self.configs[1]
-        self.click_margin = self.configs[2]
+        self.crop_top_left = cfg['crop_top_left']
+        self.crop_size = cfg['crop_size']
+        self.points_nums_avg = self.configs[0]
+        self.points_nums_var = self.configs[1]
+        self.points_size_avg = self.configs[2]
+        self.points_size_var = self.configs[3]
+        self.points_border_size = self.configs[4]
         self.device_name = device_name
         self.app_names = ['dummy']
-        self.screen = None
-        self.screenshot()
         self.visited_activities = set()
+        self.screen = None
+        self.background = None
 
     def restart(self) -> None:
         pass
@@ -211,31 +214,49 @@ class DummyPhone:
         pass
 
     def close_app(self, app_name: str) -> None:
-        pass
+        self.background = None
 
     def open_app(self, app_name: str) -> None:
-        pass
+        self.screen = None
+        self.background = np.random.uniform(0, 1, (3,))
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
 
     def screenshot(self) -> np.ndarray:
         if self.screen is None:
-            self.screen = np.ones((*self.screen_shape, 3)) * 255.0
-            self.points = list(zip(np.random.randint(self.screen_shape[0], size=self.point_nums),
-                                   np.random.randint(self.screen_shape[1], size=self.point_nums)))
-            print(self.points)
+            self.screen = np.minimum(1.0, np.maximum(0.0, np.random.normal(scale=.5, size=(*self.screen_shape, 3))
+                                             + self.background))
+            points_nums = int(np.maximum(1, np.random.normal(self.points_nums_avg, self.points_nums_var)))
+            self.points = list(zip(np.random.randint(self.crop_size[0], size=points_nums) + self.crop_top_left[0],
+                                   np.random.randint(self.crop_size[1], size=points_nums) + self.crop_top_left[1]))
+            self.points_margins = []
             for p in self.points:
-                self.screen[max(p[0] - self.point_margin, 0): p[0] + self.point_margin + 1,
-                max(p[1] - self.point_margin, 0):p[1] + self.point_margin + 1, :2] = 0.0
-        return self.screen / 255.0
+                point_margin = [int(np.random.normal(self.points_size_avg, self.points_size_var) // 2),
+                                int(np.random.normal(self.points_size_avg, self.points_size_var) // 2)]
+                self.points_margins += [point_margin]
+                point_top_left = [max(0, p[0] - point_margin[0]), max(0, p[1] - point_margin[1])]
+                point_bottom_right = [min(self.screen_shape[0], p[0] + point_margin[0]),
+                                      min(self.screen_shape[1], p[1] + point_margin[1])]
+                point_color = np.minimum(1, np.maximum(0, np.random.normal(1 - self.background, .5, (3,))))
+                brd = self.points_border_size // 2
+                self.screen[point_top_left[0]:point_bottom_right[0],
+                max(0, point_top_left[1] - brd):point_top_left[1] + brd] = point_color
+                self.screen[point_top_left[0]:point_bottom_right[0],
+                max(0, point_bottom_right[1] - brd):point_bottom_right[1] + brd] = point_color
+                self.screen[max(0, point_top_left[0] - brd):point_top_left[0] + brd,
+                point_top_left[1]:point_bottom_right[1]] = point_color
+                self.screen[max(0, point_bottom_right[0] - brd):point_bottom_right[0] + brd,
+                point_top_left[1]:point_bottom_right[1]] = point_color
+        return self.screen
 
     def send_event(self, x: int, y: int, type: int) -> None:
         if type != 0:
             raise NotImplementedError()
         print(f'{datetime.now()}: dummy event sent to {self.device_name}')
-        for p in self.points:
-            if np.linalg.norm(np.array([y, x]) - np.array(p)) < self.click_margin:
+        br = self.points_border_size // 2
+        for p, mr in zip(self.points, self.points_margins):
+            if p[0] + mr[0] - br >= y >= p[0] - mr[0] + br and p[1] + mr[1] - br >= x >= p[1] - mr[1] + br:
                 self.screen = None
                 self.screenshot()
                 break

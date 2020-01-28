@@ -12,13 +12,16 @@ from utils import normalized_columns_initializer
 
 class ScreenEncoder:
     def __init__(self, crop_top_left: Tuple[int, int], crop_size: Tuple[int, int], screen_new_shape: Tuple[int, int],
-                 kernel_sizes: Tuple, filter_nums: Tuple, stride_sizes: Tuple):
+                 contrast_alpha: float,
+                 kernel_sizes: Tuple, filter_nums: Tuple, stride_sizes: Tuple, maxpool_sizes: Tuple):
         self.crop_top_left = crop_top_left
         self.crop_size = crop_size
         self.screen_new_shape = screen_new_shape
+        self.contrast_alpha = contrast_alpha
         self.kernel_sizes = kernel_sizes
         self.filter_nums = filter_nums
         self.stride_sizes = stride_sizes
+        self.maxpool_sizes = maxpool_sizes
 
     # any kind of max pooling here?
     def __call__(self, inputs):
@@ -30,10 +33,20 @@ class ScreenEncoder:
             tf.image.crop_to_bounding_box(tf.image.rgb_to_grayscale(tf.cast(env_states[0], tf.float32)),
                                           self.crop_top_left[0], self.crop_top_left[1],
                                           self.crop_size[0], self.crop_size[1]), self.screen_new_shape)
+        hidden = tf.where(tf.reduce_sum(tf.cast(hidden < .5, tf.float64)) < tf.size(hidden) / 2, 1 - hidden, hidden)
+        if self.contrast_alpha > 0:
+            hidden = tf.sigmoid(self.contrast_alpha * (hidden - .5))
+        hidden = (hidden - tf.reduce_min(hidden)) / (tf.reduce_max(hidden) - tf.reduce_min(hidden))
+        # hidden = tf.concat([tf.repeat(hidden[:1, :, :], self.padding[0], axis=0), hidden,
+        #                     tf.repeat(hidden[-1:, :, :], self.padding[1], axis=0)], axis=0)
+        # hidden = tf.concat([tf.repeat(hidden[:, :1, :], self.padding[2], axis=1), hidden,
+        #                     tf.repeat(hidden[:, -1:, :], self.padding[3], axis=1)], axis=1)
         self.processed_screen = tf.expand_dims(hidden, axis=0)
-        for k, f, s in zip(self.kernel_sizes, self.filter_nums, self.stride_sizes):
+        for k, f, s, mx in zip(self.kernel_sizes, self.filter_nums, self.stride_sizes, self.maxpool_sizes):
             hidden = slim.conv2d(activation_fn=tf.nn.elu, inputs=hidden,
-                                 num_outputs=f, kernel_size=k, stride=s, padding='SAME')
+                                 num_outputs=f, kernel_size=k, stride=s, padding='VALID')
+            if np.any(np.array(mx) > 1):
+                hidden = tf.nn.max_pool2d(hidden, mx, mx, 'VALID')
         return tf.expand_dims(hidden, axis=0), ()
 
     def get_processed_screen(self) -> tf.Tensor:
@@ -53,16 +66,20 @@ class PolicyGenerator:
         def deconv(activation, input, filters, kernel, output_shape):
             output_shape = np.array(output_shape)
             input_shape = np.array([input.shape[1], input.shape[2]])
-            assert np.all(output_shape % input_shape == 0)
             stride = output_shape // input_shape
-            return slim.conv2d_transpose(activation_fn=activation, inputs=input, num_outputs=filters,
-                                         kernel_size=kernel, stride=stride, padding='SAME')
+            res = slim.conv2d_transpose(activation_fn=activation, inputs=input, num_outputs=filters,
+                                        kernel_size=kernel, stride=stride, padding='VALID')
+            assert np.all(res.shape[-3:-1] == output_shape)
+            return res
 
         hidden = inputs[0][0]
         for k, f, o in zip(self.kernel_sizes[:-1], self.filter_nums, self.deconv_output_shapes):
             hidden = deconv(tf.nn.elu, hidden, f, k, o)
         # any use of normalized_columns_initializer like ajuliani did?
-        hidden = deconv(tf.nn.elu, hidden, self.action_shape[-1], self.kernel_sizes[-1], self.action_shape[:-1])
+        if len(self.kernel_sizes) > 0:
+            hidden = deconv(None, hidden, self.action_shape[-1], self.kernel_sizes[-1], self.action_shape[:-1])
+        else:
+            hidden = deconv(None, hidden, self.action_shape[-1], 1, self.action_shape[:-1])
         res = tf.expand_dims(slim.flatten(hidden), axis=0)
         assert tuple(map(int, (hidden.shape[1:]))) == self.action_shape
         return res, ()
@@ -91,7 +108,7 @@ class ValueEstimator:
         if self.value is None:
             hidden = slim.flatten(slim.conv2d(activation_fn=None,
                                               inputs=inputs[0][0], num_outputs=1,
-                                              kernel_size=1, stride=1, padding='SAME'))
+                                              kernel_size=1, stride=1, padding='VALID'))
             return tf.expand_dims(slim.fully_connected(hidden, 1,
                                                        activation_fn=None,
                                                        weights_initializer=normalized_columns_initializer(1.0),
