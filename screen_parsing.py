@@ -12,12 +12,13 @@ from utils import normalized_columns_initializer
 
 class ScreenEncoder:
     def __init__(self, crop_top_left: Tuple[int, int], crop_size: Tuple[int, int], screen_new_shape: Tuple[int, int],
-                 contrast_alpha: float,
+                 contrast_alpha: float, padding_type: str,
                  kernel_sizes: Tuple, filter_nums: Tuple, stride_sizes: Tuple, maxpool_sizes: Tuple):
         self.crop_top_left = crop_top_left
         self.crop_size = crop_size
         self.screen_new_shape = screen_new_shape
         self.contrast_alpha = contrast_alpha
+        self.padding_type = padding_type
         self.kernel_sizes = kernel_sizes
         self.filter_nums = filter_nums
         self.stride_sizes = stride_sizes
@@ -44,9 +45,9 @@ class ScreenEncoder:
         self.processed_screen = tf.expand_dims(hidden, axis=0)
         for k, f, s, mx in zip(self.kernel_sizes, self.filter_nums, self.stride_sizes, self.maxpool_sizes):
             hidden = slim.conv2d(activation_fn=tf.nn.elu, inputs=hidden,
-                                 num_outputs=f, kernel_size=k, stride=s, padding='VALID')
+                                 num_outputs=f, kernel_size=k, stride=s, padding=self.padding_type)
             if np.any(np.array(mx) > 1):
-                hidden = tf.nn.max_pool2d(hidden, mx, mx, 'VALID')
+                hidden = tf.nn.max_pool2d(hidden, mx, mx, self.padding_type)
         return tf.expand_dims(hidden, axis=0), ()
 
     def get_processed_screen(self) -> tf.Tensor:
@@ -55,9 +56,10 @@ class ScreenEncoder:
 
 # any kind of normalization?
 class PolicyGenerator:
-    def __init__(self, action_shape: Tuple[int, int, int],
+    def __init__(self, action_shape: Tuple[int, int, int], padding_type: str,
                  kernel_sizes: Tuple, filter_nums: Tuple, deconv_output_shapes: Tuple):
         self.action_shape = action_shape
+        self.padding_type = padding_type
         self.kernel_sizes = kernel_sizes
         self.filter_nums = filter_nums
         self.deconv_output_shapes = deconv_output_shapes
@@ -68,7 +70,7 @@ class PolicyGenerator:
             input_shape = np.array([input.shape[1], input.shape[2]])
             stride = output_shape // input_shape
             res = slim.conv2d_transpose(activation_fn=activation, inputs=input, num_outputs=filters,
-                                        kernel_size=kernel, stride=stride, padding='VALID')
+                                        kernel_size=kernel, stride=stride, padding=self.padding_type)
             assert np.all(res.shape[-3:-1] == output_shape)
             return res
 
@@ -87,8 +89,9 @@ class PolicyGenerator:
 
 # better value estimator
 class ValueEstimator:
-    def __init__(self, value):
+    def __init__(self, value, padding_type: str = None):
         self.value = value
+        self.padding_type = padding_type
         if value is not None:
             # read the manual one more time to see what is the different to pass tf.constant vs python float
             self.statc_vals = ValueEstimator.get_static_vals(tf.constant(value, dtype=tf.float32))
@@ -108,7 +111,7 @@ class ValueEstimator:
         if self.value is None:
             hidden = slim.flatten(slim.conv2d(activation_fn=None,
                                               inputs=inputs[0][0], num_outputs=1,
-                                              kernel_size=1, stride=1, padding='VALID'))
+                                              kernel_size=1, stride=1, padding=self.padding_type))
             return tf.expand_dims(slim.fully_connected(hidden, 1,
                                                        activation_fn=None,
                                                        weights_initializer=normalized_columns_initializer(1.0),

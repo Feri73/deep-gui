@@ -54,6 +54,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
         self.contrast_alpha = cfg['contrast_alpha']
+        self.padding_type = cfg['padding_type']
         conv_kernel_sizes = cfg['conv_kernel_sizes']
         conv_filter_nums = cfg['conv_filter_nums']
         conv_stride_sizes = cfg['conv_stride_sizes']
@@ -78,11 +79,12 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
 
         with tf.variable_scope(scope):
             screen_encoder = ScreenEncoder(crop_top_left, crop_size, self.screen_new_shape, self.contrast_alpha,
-                                           conv_kernel_sizes, conv_filter_nums, conv_stride_sizes, conv_maxpool_sizes)
+                                           self.padding_type, conv_kernel_sizes, conv_filter_nums,
+                                           conv_stride_sizes, conv_maxpool_sizes)
             policy_user = PolicyUser(policy_user)
-            rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, deconv_kernel_sizes,
+            rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, self.padding_type, deconv_kernel_sizes,
                                                            deconv_filter_nums, deconv_output_shapes),
-                           ValueEstimator(value), policy_user, action_tensor_shape, cfg)
+                           ValueEstimator(value, self.padding_type), policy_user, action_tensor_shape, cfg)
 
         self.summary_writer = tf.summary.FileWriter(f'{summary_path}/{scope}')
 
