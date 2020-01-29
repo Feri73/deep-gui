@@ -148,7 +148,7 @@ policy_users = [
     (base.most_certain_weighted_policy_user, value_estimator_values[3]),
     (base.least_probable_weighted_policy_user, value_estimator_values[4])
 ]
-policy_users = [p for p in policy_users if p[1] < np.inf]
+policy_users = [p for p in policy_users if p[1] is None or p[1] < np.inf]
 optimizers = [tf.train.AdamOptimizer, tf.train.RMSPropOptimizer]
 
 if dummy_mode:
