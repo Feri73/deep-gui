@@ -55,6 +55,9 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         self.crop_size = cfg['crop_size']
         self.contrast_alpha = cfg['contrast_alpha']
         self.padding_type = cfg['padding_type']
+        self.value_estimator_use_range = cfg['value_estimator_use_range']
+        self.pos_reward = cfg['pos_reward']
+        self.neg_reward = cfg['neg_reward']
         conv_kernel_sizes = cfg['conv_kernel_sizes']
         conv_filter_nums = cfg['conv_filter_nums']
         conv_stride_sizes = cfg['conv_stride_sizes']
@@ -84,7 +87,9 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
             policy_user = PolicyUser(policy_user)
             rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, self.padding_type, deconv_kernel_sizes,
                                                            deconv_filter_nums, deconv_output_shapes),
-                           ValueEstimator(value, self.padding_type), policy_user, action_tensor_shape, cfg)
+                           ValueEstimator(value, (self.neg_reward, self.pos_reward)
+                                          if self.value_estimator_use_range else None, self.padding_type),
+                           policy_user, action_tensor_shape, cfg)
 
         self.summary_writer = tf.summary.FileWriter(f'{summary_path}/{scope}')
 

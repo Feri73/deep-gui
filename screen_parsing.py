@@ -89,8 +89,9 @@ class PolicyGenerator:
 
 # better value estimator
 class ValueEstimator:
-    def __init__(self, value, padding_type: str = None):
+    def __init__(self, value, value_range: Tuple[float, float] = None, padding_type: str = None):
         self.value = value
+        self.value_range = value_range
         self.padding_type = padding_type
         if value is not None:
             # read the manual one more time to see what is the different to pass tf.constant vs python float
@@ -112,8 +113,9 @@ class ValueEstimator:
             hidden = slim.flatten(slim.conv2d(activation_fn=None,
                                               inputs=inputs[0][0], num_outputs=1,
                                               kernel_size=1, stride=1, padding=self.padding_type))
-            return tf.expand_dims(slim.fully_connected(hidden, 1,
-                                                       activation_fn=None,
-                                                       weights_initializer=normalized_columns_initializer(1.0),
-                                                       biases_initializer=None), 0), ()
+            res = slim.fully_connected(hidden, 1, activation_fn=None if self.value_range is None else 'sigmoid',
+                                       weights_initializer=normalized_columns_initializer(1.0), biases_initializer=None)
+            if self.value_range is not None:
+                res = res * (self.value_range[1] - self.value_range[0]) + self.value_range[0]
+            return tf.expand_dims(res, 0), ()
         return self.statc_vals(inputs[0]), ()

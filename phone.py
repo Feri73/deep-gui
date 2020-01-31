@@ -200,7 +200,8 @@ class DummyPhone:
         self.points_nums_var = self.configs[1]
         self.points_size_avg = self.configs[2]
         self.points_size_var = self.configs[3]
-        self.points_border_size = self.configs[4]
+        self.points_size_min = self.configs[4]
+        self.points_border_size = self.configs[5]
         self.device_name = device_name
         self.app_names = ['dummy']
         self.visited_activities = set()
@@ -232,31 +233,33 @@ class DummyPhone:
                                    np.random.randint(self.crop_size[1], size=points_nums) + self.crop_top_left[1]))
             self.points_margins = []
             for p in self.points:
-                point_margin = [int(np.random.normal(self.points_size_avg, self.points_size_var) // 2),
-                                int(np.random.normal(self.points_size_avg, self.points_size_var) // 2)]
+                point_margin = [max(self.points_size_min,
+                                    int(np.random.normal(self.points_size_avg, self.points_size_var) // 2)),
+                                max(self.points_size_min,
+                                    int(np.random.normal(self.points_size_avg, self.points_size_var) // 2))]
                 self.points_margins += [point_margin]
                 point_top_left = [max(0, p[0] - point_margin[0]), max(0, p[1] - point_margin[1])]
                 point_bottom_right = [min(self.screen_shape[0], p[0] + point_margin[0]),
                                       min(self.screen_shape[1], p[1] + point_margin[1])]
-                point_color = np.minimum(1, np.maximum(0, np.random.normal(1 - self.background, .5, (3,))))
-                brd = self.points_border_size // 2
+                point_color = np.minimum(1, np.maximum(0, np.random.normal(1 - self.background, .2, (3,))))
+                brd_out = int(np.ceil(self.points_border_size / 2))
+                brd_in = self.points_border_size // 2
                 self.screen[point_top_left[0]:point_bottom_right[0],
-                max(0, point_top_left[1] - brd):point_top_left[1] + brd] = point_color
+                max(0, point_top_left[1] - brd_out):point_top_left[1] + brd_in] = point_color
                 self.screen[point_top_left[0]:point_bottom_right[0],
-                max(0, point_bottom_right[1] - brd):point_bottom_right[1] + brd] = point_color
-                self.screen[max(0, point_top_left[0] - brd):point_top_left[0] + brd,
+                max(0, point_bottom_right[1] - brd_in):point_bottom_right[1] + brd_out] = point_color
+                self.screen[max(0, point_top_left[0] - brd_out):point_top_left[0] + brd_in,
                 point_top_left[1]:point_bottom_right[1]] = point_color
-                self.screen[max(0, point_bottom_right[0] - brd):point_bottom_right[0] + brd,
+                self.screen[max(0, point_bottom_right[0] - brd_in):point_bottom_right[0] + brd_out,
                 point_top_left[1]:point_bottom_right[1]] = point_color
         return self.screen
 
     def send_event(self, x: int, y: int, type: int) -> None:
         if type != 0:
             raise NotImplementedError()
-        print(f'{datetime.now()}: dummy event sent to {self.device_name}')
-        br = self.points_border_size // 2
+        br_in = self.points_border_size // 2
         for p, mr in zip(self.points, self.points_margins):
-            if p[0] + mr[0] - br >= y >= p[0] - mr[0] + br and p[1] + mr[1] - br >= x >= p[1] - mr[1] + br:
+            if p[0] + mr[0] - br_in >= y >= p[0] - mr[0] + br_in and p[1] + mr[1] - br_in >= x >= p[1] - mr[1] + br_in:
                 self.screen = None
                 self.screenshot()
                 break
