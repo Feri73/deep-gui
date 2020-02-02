@@ -49,6 +49,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
         save_max_keep = cfg['save_max_keep']
         self.debug_mode = cfg['debug_mode']
         self.steps_per_log = cfg['steps_per_log']
+        self.steps_per_screen_log = cfg['steps_per_screen_log']
         self.target_updates_per_save = cfg['target_updates_per_save']
         self.local_change_size = cfg['local_change_size']
         self.crop_top_left = cfg['crop_top_left']
@@ -88,7 +89,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
             rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, self.padding_type, deconv_kernel_sizes,
                                                            deconv_filter_nums, deconv_output_shapes, None),
                            ValueEstimator(value, (self.neg_reward, self.pos_reward)
-                                          if self.value_estimator_use_range else None, self.padding_type),
+                           if self.value_estimator_use_range else None, self.padding_type),
                            policy_user, action_tensor_shape, cfg)
 
         self.summary_writer = tf.summary.FileWriter(f'{summary_path}/{scope}')
@@ -156,51 +157,54 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                 self.mean_lengths = []
                 self.logs = ()
 
-            if self.last_env_state is not None:
-                global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0])
-                                             - RelevantActionEnvironment.crop_state(self, self.last_env_state))
-                local_diff = np.linalg.norm(
-                    RelevantActionEnvironment.
-                    crop_to_local(self, RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0]),
-                                  self.last_action)
-                    - RelevantActionEnvironment.
-                    crop_to_local(self, RelevantActionEnvironment.crop_state(self, self.last_env_state),
-                                  self.last_action))
-            # measure how much time these logs take, if too much, justt disable them for
-            #   everything except the test agent (the final agent)
-            if self.log_screen:
-                env_state = episode.states_tb[0][0] * 255.0
-                action = self.action2pos(episode.actions_tb[1][0], original=True)
-                if self.grid_logs:
-                    env_state = grid_image(env_state, env_state.shape[:-1] // np.array(self.action_shape), (0, 0, 0))
-                env_state = show_local_border(env_state, (self.local_change_size,) * 2, action)
-                env_state[max(0, action[1] - 5):action[1] + 5, max(0, action[0] - 5):action[0] + 5] = [255, 0, 0]
+            if step % self.steps_per_screen_log == 0:
                 if self.last_env_state is not None:
-                    env_state = self.add_diff_texts(env_state, global_diff, local_diff)
-                summary.value.add(tag='episodes', image=get_image_summary(env_state))
-            if self.log_new_screen:
-                env_state = gradient.logs_e[self.new_screen_log_index][0, 0] * 255.0
-                if env_state.shape[-1] == 1:
-                    env_state = np.concatenate([env_state] * 3, axis=-1)
-                action = self.action2pos(episode.actions_tb[1][0], original=False)
-                if self.grid_logs:
-                    env_state = grid_image(env_state, np.array(self.screen_new_shape) // np.array(self.action_shape),
-                                           (0, 0, 0))
-                env_state = show_local_border(env_state,
-                                              (self.local_change_size * self.screen_new_shape[0] //
-                                               episode.states_tb[0][0].shape[0],
-                                               self.local_change_size * self.screen_new_shape[1] //
-                                               episode.states_tb[0][0].shape[1]), action)
-                env_state[action[1], action[0], :] = [255, 0, 0]
-                if self.last_env_state is not None:
-                    env_state = self.add_diff_texts(env_state, global_diff, local_diff)
-                summary.value.add(tag='processed episode', image=get_image_summary(env_state))
-            # this is only click policy. make it more general (IDK how tho :|)
-            if self.log_policy:
-                policy = np.reshape(gradient.logs_e[self.policy_log_index][0, 0], self.action_shape)
-                policy = cm.viridis(policy)[:, :, :3] * 255.0
-                summary.value.add(tag='policy', image=get_image_summary(policy))
-            # i can also visualize layers of CNN
+                    global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0])
+                                                 - RelevantActionEnvironment.crop_state(self, self.last_env_state))
+                    local_diff = np.linalg.norm(
+                        RelevantActionEnvironment.
+                        crop_to_local(self, RelevantActionEnvironment.crop_state(self, episode.states_tb[0][0]),
+                                      self.last_action)
+                        - RelevantActionEnvironment.
+                        crop_to_local(self, RelevantActionEnvironment.crop_state(self, self.last_env_state),
+                                      self.last_action))
+                # measure how much time these logs take, if too much, justt disable them for
+                #   everything except the test agent (the final agent)
+                if self.log_screen:
+                    env_state = episode.states_tb[0][0] * 255.0
+                    action = self.action2pos(episode.actions_tb[1][0], original=True)
+                    if self.grid_logs:
+                        env_state = grid_image(env_state, env_state.shape[:-1] // np.array(self.action_shape),
+                                               (0, 0, 0))
+                    env_state = show_local_border(env_state, (self.local_change_size,) * 2, action)
+                    env_state[max(0, action[1] - 5):action[1] + 5, max(0, action[0] - 5):action[0] + 5] = [255, 0, 0]
+                    if self.last_env_state is not None:
+                        env_state = self.add_diff_texts(env_state, global_diff, local_diff)
+                    summary.value.add(tag='episodes', image=get_image_summary(env_state))
+                if self.log_new_screen:
+                    env_state = gradient.logs_e[self.new_screen_log_index][0, 0] * 255.0
+                    if env_state.shape[-1] == 1:
+                        env_state = np.concatenate([env_state] * 3, axis=-1)
+                    action = self.action2pos(episode.actions_tb[1][0], original=False)
+                    if self.grid_logs:
+                        env_state = grid_image(env_state,
+                                               np.array(self.screen_new_shape) // np.array(self.action_shape),
+                                               (0, 0, 0))
+                    env_state = show_local_border(env_state,
+                                                  (self.local_change_size * self.screen_new_shape[0] //
+                                                   episode.states_tb[0][0].shape[0],
+                                                   self.local_change_size * self.screen_new_shape[1] //
+                                                   episode.states_tb[0][0].shape[1]), action)
+                    env_state[action[1], action[0], :] = [255, 0, 0]
+                    if self.last_env_state is not None:
+                        env_state = self.add_diff_texts(env_state, global_diff, local_diff)
+                    summary.value.add(tag='processed episode', image=get_image_summary(env_state))
+                # this is only click policy. make it more general (IDK how tho :|)
+                if self.log_policy:
+                    policy = np.reshape(gradient.logs_e[self.policy_log_index][0, 0], self.action_shape)
+                    policy = cm.viridis(policy)[:, :, :3] * 255.0
+                    summary.value.add(tag='policy', image=get_image_summary(policy))
+                # i can also visualize layers of CNN
 
             self.summary_writer.add_summary(summary, step)
             self.summary_writer.flush()

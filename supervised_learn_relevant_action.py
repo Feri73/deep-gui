@@ -52,6 +52,7 @@ class Agent(base.Agent):
         save_max_keep = cfg['save_max_keep']
         self.debug_mode = cfg['debug_mode']
         self.steps_per_log = cfg['steps_per_log']
+        self.steps_per_screen_log = cfg['steps_per_screen_log']
         self.target_updates_per_save = cfg['target_updates_per_save']
         self.local_change_size = cfg['local_change_size']
         self.crop_top_left = cfg['crop_top_left']
