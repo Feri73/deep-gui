@@ -17,3 +17,5 @@
 !app_downloader.py
 !test_relevant_action.py
 !relevant_action_base.py
+!supervised_learn_relevant_action.py
+!single_step_binary_reward_dqn.py

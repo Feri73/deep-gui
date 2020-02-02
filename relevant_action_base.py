@@ -86,7 +86,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
                                            conv_stride_sizes, conv_maxpool_sizes)
             policy_user = PolicyUser(policy_user)
             rl_model = A2C(screen_encoder, PolicyGenerator(action_tensor_shape, self.padding_type, deconv_kernel_sizes,
-                                                           deconv_filter_nums, deconv_output_shapes),
+                                                           deconv_filter_nums, deconv_output_shapes, None),
                            ValueEstimator(value, (self.neg_reward, self.pos_reward)
                                           if self.value_estimator_use_range else None, self.padding_type),
                            policy_user, action_tensor_shape, cfg)
