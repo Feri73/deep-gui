@@ -179,7 +179,7 @@ class Phone:
         image_path = glob.glob(f'tmp-{self.device_name}/Screenshot*.png')[0]
         res = mpimg.imread(image_path)[:, :, :-1]
         os.remove(image_path)
-        return res
+        return (res * 255).astype(np.uint8)
 
     def send_event(self, x: int, y: int, type: int) -> None:
         if type != 0:
@@ -227,7 +227,7 @@ class DummyPhone:
     def screenshot(self) -> np.ndarray:
         if self.screen is None:
             self.screen = np.minimum(1.0, np.maximum(0.0, np.random.normal(scale=.5, size=(*self.screen_shape, 3))
-                                             + self.background))
+                                                     + self.background))
             points_nums = int(np.maximum(1, np.random.normal(self.points_nums_avg, self.points_nums_var)))
             self.points = list(zip(np.random.randint(self.crop_size[0], size=points_nums) + self.crop_top_left[0],
                                    np.random.randint(self.crop_size[1], size=points_nums) + self.crop_top_left[1]))
@@ -252,7 +252,7 @@ class DummyPhone:
                 point_top_left[1]:point_bottom_right[1]] = point_color
                 self.screen[max(0, point_bottom_right[0] - brd_in):point_bottom_right[0] + brd_out,
                 point_top_left[1]:point_bottom_right[1]] = point_color
-        return self.screen
+        return (self.screen * 255).astype(np.uint8)
 
     def send_event(self, x: int, y: int, type: int) -> None:
         if type != 0:

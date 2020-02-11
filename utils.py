@@ -1,4 +1,5 @@
 import os
+import pickle
 from typing import Callable, Dict, Any, List, Tuple
 
 import numpy as np
@@ -79,3 +80,13 @@ class MemList(MemVariable):
     def reset_value(self) -> None:
         for c in self.content:
             c.reset_value()
+
+
+def dump_obj(obj: Any, file_path: str):
+    with open(file_path, 'wb') as f:
+        pickle.dump(obj, f)
+
+
+def load_obj(file_path: str) -> Any:
+    with open(file_path, 'rb') as f:
+        return pickle.load(f)
