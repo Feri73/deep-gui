@@ -16,6 +16,7 @@ import tensorflow.keras as keras
 import yaml
 import matplotlib.cm as cm
 import scipy.misc
+from PIL import Image, ImageDraw
 
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
 from phone import DummyPhone, Phone
@@ -176,7 +177,7 @@ class LearningAgent:
         # plot the model (maybe here or where it's created)
         self.model = model
 
-        # self.log_callback = keras.callbacks.TensorBoard(f'{self.logs_dir}{os.pathsep}learner {self.id}')
+        # self.log_callback = keras.callbacks.TensorBoard(f'{self.logs_dir}{os.sep}learner_{self.id}')
 
     class EpisodeFileManager:
         def __init__(self, episode_files: List[EpisodeFile]):
@@ -630,10 +631,17 @@ def cond_flush(step: int, values: np.ndarray = None, buffer_logger: 'BufferLogge
 
 class CollectorLogger(EnvironmentCallbacks):
     def __init__(self, name: str, screen_preprocessor: ScreenPreprocessor, screen_parser: ScreenParser,
-                 reward_predictor: RewardPredictor, cfg: Config):
+                 reward_predictor: RewardPredictor, action_for_screen: Callable,
+                 to_preprocessed_coord: Callable, cfg: Config):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.dir = cfg['dir']
+        self.local_change_size = cfg['local_change_size']
+        self.crop_top_left = cfg['crop_top_left']
+        self.crop_size = cfg['crop_size']
+
+        self.action_for_screen = action_for_screen
+        self.to_preprocessed_coord = to_preprocessed_coord
 
         self.local_step = 0
         self.rewards = []
@@ -653,6 +661,18 @@ class CollectorLogger(EnvironmentCallbacks):
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
 
+    def calc_diffs(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray):
+        global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, src_state)
+                                     - RelevantActionEnvironment.crop_state(self, dst_state))
+        local_diff = np.linalg.norm(
+            RelevantActionEnvironment.
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state),
+                          self.action_for_screen(action[2:]))
+            - RelevantActionEnvironment.
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state),
+                          self.action_for_screen(action[2:])))
+        return global_diff, local_diff
+
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
         self.rewards.append(np.array(reward))
@@ -660,32 +680,72 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_scalar('Reward', self.rewards)
             self.rewards = []
         if self.local_step % self.image_log_frequency == 0:
+            assert self.action is None
             self.action = action
-            self.log_screen('Screen', src_state)
-            self.log_screen('Preprocessed Screen', self.preprocessed_screen)
-        else:
-            self.action = None
-            self.preprocessed_screen = None
+            diffs = self.calc_diffs(src_state, action, dst_state)
+            self.log_screen('Screen', src_state, lambda x: x, diffs)
+            self.log_screen('Preprocessed Screen', (self.preprocessed_screen * 255).astype(np.uint8),
+                            self.to_preprocessed_coord, diffs)
+        self.action = None
+        self.preprocessed_screen = None
 
     def on_episode_end(self, premature: bool) -> None:
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
 
     def buffer_preprocessed_screen(self, screen: np.ndarray) -> None:
+        assert self.preprocessed_screen is None
         self.preprocessed_screen = screen
 
-    def log_screen(self, name: str, screen: np.ndarray) -> None:
-        self.log_image(name, screen * 255.0)
+    def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable,
+                   diffs: Optional[Tuple[float, float]]) -> None:
+        if self.action[-1] != 0:
+            raise NotImplementedError('Only one type of action is supported for now.')
+        screen = screen.copy()
+        if screen.shape[-1] == 1:
+            screen = np.concatenate([screen] * 3, axis=-1)
+        action_p = point_transformer(self.action_for_screen(self.action[:2])).astype(np.int32)
+        screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
+        transformed_size_x = np.linalg.norm(point_transformer(np.array([0, 0])) -
+                                            point_transformer(np.array([self.local_change_size, 0])))
+        transformed_size_y = np.linalg.norm(point_transformer(np.array([0, 0])) -
+                                            point_transformer(np.array([0, self.local_change_size])))
+        screen = self.add_local_border(screen, np.array([transformed_size_x, transformed_size_y]), action_p)
+
+        if diffs is not None:
+            screen = self.add_diff_texts(screen, diffs[0], diffs[1])
+        self.log_image(name, screen)
+
+    @staticmethod
+    def add_local_border(image: np.ndarray, local_size: np.ndarray, action_p: np.ndarray) -> np.ndarray:
+        local_size_half = (local_size // 2).astype(np.int32)
+        image = image.copy()
+        image[max(0, action_p[0] - local_size_half[0]):action_p[0] + local_size_half[0],
+        max(0, action_p[1] - local_size_half[1])] = [0, 255, 0]
+        image[max(0, action_p[0] - local_size_half[0]):action_p[0] + local_size_half[0],
+        min(image.shape[1] - 1, action_p[1] + local_size_half[1])] = [0, 255, 0]
+        image[max(0, action_p[0] - local_size_half[0]),
+        max(0, action_p[1] - local_size_half[1]):action_p[1] + local_size_half[1]] = [0, 255, 0]
+        image[min(image.shape[0] - 1, action_p[0] + local_size_half[0]),
+        max(0, action_p[1] - local_size_half[1]):action_p[1] + local_size_half[1]] = [0, 255, 0]
+        return image
+
+    @staticmethod
+    def add_diff_texts(image: np.ndarray, global_diff: float, local_diff: float) -> np.ndarray:
+        image = image.copy()
+        image = Image.fromarray(np.uint8(image))
+        draw = ImageDraw.Draw(image)
+        draw.text((0, 0), f'global: {global_diff}', (255, 0, 0))
+        draw.text((0, 16), f'local: {local_diff}', (0, 255, 0))
+        return np.array(image)
 
     def log_predictions(self, pred: np.ndarray) -> None:
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
-        pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255.0
+        pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
         self.log_image('Predictions', pred)
 
     def log_image(self, name: str, image: np.ndarray) -> None:
-        if image.shape[-1] == 1:
-            image = np.concatenate([image] * 3, axis=-1)
         self.summary.value.add(tag=name, image=get_image_summary(image))
 
     def log_scalar(self, name: str, values: List[np.ndarray]) -> None:
@@ -705,7 +765,7 @@ def index_to_action(index: tf.Tensor, preds: tf.Tensor) -> tf.Tensor:
     type = tf.cast(index // np.prod(shape), tf.int32)
     y = tf.cast((index // shape[1]) % shape[0], tf.int32)
     x = tf.cast(index % shape[1], tf.int32)
-    return tf.concat([[x], [y], [type]], axis=-1)
+    return tf.concat([[y], [x], [type]], axis=-1)
 
 
 def most_probable_weighted_policy_user(probs: tf.Tensor) -> tf.Tensor:
@@ -760,6 +820,13 @@ def remove_logs(log_dir: str, reset_logs: bool) -> None:
                 pass
 
 
+def transform_linearly(coord: np.ndarray, ratio: np.ndarray, offset: np.ndarray, dtype=None) -> np.ndarray:
+    res = coord * ratio + offset
+    if dtype is not None:
+        res = res.astype(dtype)
+    return res
+
+
 def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
@@ -776,19 +843,36 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
+    screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
+    screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
+    screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
+    prediction_shape = reward_predictor_configs['prediction_shape']
+    environment_local_change_size = environment_configs['local_change_size']
 
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
     environment_configs['steps_per_episode'] = 1
     environment_configs['shuffle'] = True
-    environment_configs['crop_top_left'] = screen_preprocessor_configs['crop_top_left']
-    environment_configs['crop_size'] = screen_preprocessor_configs['crop_size']
-    phone_configs['crop_top_left'] = screen_preprocessor_configs['crop_top_left']
-    phone_configs['crop_size'] = screen_preprocessor_configs['crop_size']
+    environment_configs['crop_top_left'] = screen_preprocessor_crop_top_left
+    environment_configs['crop_size'] = screen_preprocessor_crop_size
+    phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
+    phone_configs['crop_size'] = screen_preprocessor_crop_size
     collector_configs['file_dir'] = data_file_dir
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
+    collector_logger_configs['local_change_size'] = environment_local_change_size
+    collector_logger_configs['crop_top_left'] = screen_preprocessor_crop_top_left
+    collector_logger_configs['crop_size'] = screen_preprocessor_crop_size
+
+    screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
+    screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
+    screen_preprocessor_crop_size_a = np.array(screen_preprocessor_crop_size)
+    prediction_shape_a = np.array(prediction_shape)
+
+    def action_pos_to_screen_pos(action_p: np.ndarray) -> np.ndarray:
+        return transform_linearly(action_p + .5, screen_preprocessor_crop_size_a / prediction_shape_a,
+                                  screen_preprocessor_crop_top_left_a, np.int32)
 
     example_episode = Episode(np.zeros((*screen_shape, 3), np.uint8), np.zeros(3, np.int32),
                               np.zeros((), np.bool), np.zeros((*screen_shape, 3), np.uint8))
@@ -816,7 +900,11 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
                                      (preds))(predictions)
 
     if not is_learner:
-        logger = CollectorLogger(f'agent {id}', screen_preprocessor, screen_parser, reward_predictor,
+        logger = CollectorLogger(f'agent_{id}', screen_preprocessor, screen_parser, reward_predictor,
+                                 action_pos_to_screen_pos,
+                                 lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
+                                                              screen_preprocessor_resize_size_a /
+                                                              screen_preprocessor_crop_size_a, np.array([0, 0])),
                                  collector_logger_configs)
         with tf.control_dependencies(logger.get_dependencies()):
             output = tf.identity(output)
@@ -830,9 +918,13 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
 
     phone_type = DummyPhone if dummy_mode else Phone
 
+    def action2pos(action: np.ndarray) -> Tuple[int, int, int]:
+        pos = action_pos_to_screen_pos(action[:2])
+        return pos[1], pos[0], action[2]
+
     def create_environment(collector: DataCollectionAgent) -> Environment:
         env = RelevantActionEnvironment(collector, phone_type(f'device{id}', 5554 + 2 * id, phone_configs),
-                                        lambda x: x, environment_configs)
+                                        action2pos, environment_configs)
         env.add_callback(logger)
         return env
 
