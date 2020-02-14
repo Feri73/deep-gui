@@ -202,6 +202,7 @@ class DummyPhone:
         self.points_size_var = self.configs[3]
         self.points_size_min = self.configs[4]
         self.points_border_size = self.configs[5]
+        self.click_validity_margin = self.configs[6]
         self.device_name = device_name
         self.app_names = ['dummy']
         self.visited_activities = set()
@@ -258,8 +259,10 @@ class DummyPhone:
         if type != 0:
             raise NotImplementedError()
         br_in = self.points_border_size // 2
+        mrg = self.click_validity_margin
         for p, mr in zip(self.points, self.points_margins):
-            if p[0] + mr[0] - br_in >= y >= p[0] - mr[0] + br_in and p[1] + mr[1] - br_in >= x >= p[1] - mr[1] + br_in:
+            if p[0] + mr[0] - br_in + mrg >= y >= p[0] - mr[0] + br_in - mrg and\
+                    p[1] + mr[1] - br_in + mrg >= x >= p[1] - mr[1] + br_in - mrg:
                 self.screen = None
                 self.screenshot()
                 break
