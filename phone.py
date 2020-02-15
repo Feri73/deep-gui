@@ -203,6 +203,9 @@ class DummyPhone:
         self.points_size_min = self.configs[4]
         self.points_border_size = self.configs[5]
         self.click_validity_margin = self.configs[6]
+        self.background_color_average_max = self.configs[7]
+        self.background_color_average_min = self.configs[8]
+        self.background_color_var = self.configs[9]
         self.device_name = device_name
         self.app_names = ['dummy']
         self.visited_activities = set()
@@ -220,15 +223,15 @@ class DummyPhone:
 
     def open_app(self, app_name: str) -> None:
         self.screen = None
-        self.background = np.random.uniform(0, 1, (3,))
+        self.background = np.random.uniform(self.background_color_average_min, self.background_color_average_max, (3,))
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
 
     def screenshot(self) -> np.ndarray:
         if self.screen is None:
-            self.screen = np.minimum(1.0, np.maximum(0.0, np.random.normal(scale=.5, size=(*self.screen_shape, 3))
-                                                     + self.background))
+            self.screen = np.minimum(1.0, np.maximum(0.0, np.random.normal(self.background, self.background_color_var,
+                                                                           (*self.screen_shape, 3))))
             points_nums = int(np.maximum(1, np.random.normal(self.points_nums_avg, self.points_nums_var)))
             self.points = list(zip(np.random.randint(self.crop_size[0], size=points_nums) + self.crop_top_left[0],
                                    np.random.randint(self.crop_size[1], size=points_nums) + self.crop_top_left[1]))

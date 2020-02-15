@@ -297,7 +297,7 @@ class LearningAgent:
                                             dtype=example_episode.action.dtype),
                          'result': np.zeros((batch_size, *example_episode.result.shape),
                                             dtype=example_episode.result.dtype)}
-                    y = np.zeros((batch_size, *example_episode.reward.shape), dtype=np.int32)
+                    y = np.zeros((batch_size, 1), dtype=np.int32)
                     for i in range(batch_size):
                         position = positions[current_positions_i + i]
                         if position < total_size:
@@ -310,7 +310,7 @@ class LearningAgent:
                         x['state'][i] = episode.state
                         x['action'][i] = episode.action
                         x['result'][i] = episode.result
-                        y[i] = episode.reward
+                        y[i][0] = episode.reward
 
                     yield x, y
 
@@ -664,13 +664,12 @@ class CollectorLogger(EnvironmentCallbacks):
     def calc_diffs(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray):
         global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, src_state)
                                      - RelevantActionEnvironment.crop_state(self, dst_state))
+        action = self.action_for_screen(action[2:]).astype(np.int32)
         local_diff = np.linalg.norm(
             RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state),
-                          self.action_for_screen(action[2:]))
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state), action)
             - RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state),
-                          self.action_for_screen(action[2:])))
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state), action))
         return global_diff, local_diff
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
@@ -762,9 +761,9 @@ def get_image_summary(image: np.ndarray) -> tf.Summary.Image:
 
 def index_to_action(index: tf.Tensor, preds: tf.Tensor) -> tf.Tensor:
     shape = preds.shape[1:]
-    type = tf.cast(index // np.prod(shape), tf.int32)
-    y = tf.cast((index // shape[1]) % shape[0], tf.int32)
-    x = tf.cast(index % shape[1], tf.int32)
+    y = tf.cast(index // np.prod(shape[1:]), tf.int32)
+    x = tf.cast((index // shape[2]) % shape[1], tf.int32)
+    type = tf.cast(index % shape[2], tf.int32)
     return tf.concat([[y], [x], [type]], axis=-1)
 
 
@@ -806,7 +805,7 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 
 
 def prediction_sampler(predictions: tf.Tensor, actions: tf.Tensor) -> tf.Tensor:
-    return tf.gather_nd(predictions, actions, batch_dims=1)
+    return tf.expand_dims(tf.gather_nd(predictions, actions, batch_dims=1), axis=-1)
 
 
 def remove_logs(log_dir: str, reset_logs: bool) -> None:
@@ -825,6 +824,13 @@ def transform_linearly(coord: np.ndarray, ratio: np.ndarray, offset: np.ndarray,
     if dtype is not None:
         res = res.astype(dtype)
     return res
+
+
+def control_dependencies(inputs) -> tf.Tensor:
+    x, dependencies = inputs
+    with tf.control_dependencies(dependencies):
+        x = tf.identity(x)
+    return x
 
 
 def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, LearningAgent]:
@@ -870,9 +876,9 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     screen_preprocessor_crop_size_a = np.array(screen_preprocessor_crop_size)
     prediction_shape_a = np.array(prediction_shape)
 
-    def action_pos_to_screen_pos(action_p: np.ndarray) -> np.ndarray:
+    def action_pos_to_screen_pos(action_p: np.ndarray, dtype=None) -> np.ndarray:
         return transform_linearly(action_p + .5, screen_preprocessor_crop_size_a / prediction_shape_a,
-                                  screen_preprocessor_crop_top_left_a, np.int32)
+                                  screen_preprocessor_crop_top_left_a, dtype)
 
     example_episode = Episode(np.zeros((*screen_shape, 3), np.uint8), np.zeros(3, np.int32),
                               np.zeros((), np.bool), np.zeros((*screen_shape, 3), np.uint8))
@@ -884,10 +890,7 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     screen_parser = ScreenParser(screen_parser_configs)
     reward_predictor = RewardPredictor(action_type_count, 2, reward_predictor_configs)
 
-    # here i cam creating a model (not a layer) which is stupid
-    prediction_producer = keras.Sequential([screen_input, screen_preprocessor, screen_parser, reward_predictor])
-
-    predictions = prediction_producer.output
+    predictions = reward_predictor(screen_parser(screen_preprocessor(screen_input)))
     if is_learner:
         action_input = keras.layers.Input(example_episode.action.shape, batch_size,
                                           name='action', dtype=example_episode.action.dtype)
@@ -906,8 +909,8 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
                                                               screen_preprocessor_resize_size_a /
                                                               screen_preprocessor_crop_size_a, np.array([0, 0])),
                                  collector_logger_configs)
-        with tf.control_dependencies(logger.get_dependencies()):
-            output = tf.identity(output)
+
+        output = keras.layers.Lambda(control_dependencies)((output, logger.get_dependencies()))
 
     model = keras.Model(inputs=input, outputs=output)
     if weights_file is not None:
@@ -919,7 +922,7 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     phone_type = DummyPhone if dummy_mode else Phone
 
     def action2pos(action: np.ndarray) -> Tuple[int, int, int]:
-        pos = action_pos_to_screen_pos(action[:2])
+        pos = action_pos_to_screen_pos(action[:2], np.int32)
         return pos[1], pos[0], action[2]
 
     def create_environment(collector: DataCollectionAgent) -> Environment:
