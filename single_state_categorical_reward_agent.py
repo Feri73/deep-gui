@@ -886,6 +886,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
+    phone_configs['maintain_visited_activities'] = False
     collector_configs['file_dir'] = data_file_dir
     if is_tester:
         collector_configs['max_file_size'] = 0
