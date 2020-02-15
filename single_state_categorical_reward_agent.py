@@ -114,7 +114,7 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
             self.on_file_completed_callback()
             # notify controller here
 
-        if new_file:
+        if new_file and self.max_file_size > 0:
             self.current_file_version += 1
             self.current_file_size = 0
             self.reward_indices = defaultdict(list)
@@ -123,11 +123,12 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
                                             self.max_file_size, self.example_episode, 'w+')
 
     def store_episode(self, episode: Episode) -> None:
-        if self.current_file_size == self.max_file_size:
-            self.reset_file()
-        self.reward_indices[int(episode.reward)].append(self.current_file_size)
-        self.current_file.set(episode, self.current_file_size)
-        self.current_file_size += 1
+        if self.current_file is not None:
+            if self.current_file_size == self.max_file_size:
+                self.reset_file()
+            self.reward_indices[int(episode.reward)].append(self.current_file_size)
+            self.current_file.set(episode, self.current_file_size)
+            self.current_file_size += 1
 
     def should_start_episode(self) -> bool:
         res = self.finished_episodes_count < self.max_episodes
@@ -372,15 +373,18 @@ class Thread(ABC):
 
 class Coordinator(ABC, EnvironmentCallbacks):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
-                 learner_creator: Callable[[], LearningAgent]):
+                 learner_creator: Callable[[], LearningAgent],
+                 tester_creators: List[Callable[[], DataCollectionAgent]]):
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
+        self.tester_creators = tester_creators
 
         self.learner = None
         self.file_completions = defaultdict(list)
 
         self.learner_thread = None
         self.collector_threads = []
+        self.tester_threads = []
 
     @abstractmethod
     def get_thread_locals(self) -> ThreadLocals:
@@ -419,8 +423,10 @@ class Coordinator(ABC, EnvironmentCallbacks):
             locals.new_weight = None
 
     def sync_weights(self) -> None:
-        for c_id, collector_thread in enumerate(self.collector_threads):
+        for collector_thread in self.collector_threads:
             collector_thread.add_to_run_queue(Coordinator.local_set_new_weight, self.learner.get_weights())
+        for tester_thread in self.tester_threads:
+            tester_thread.add_to_run_queue(Coordinator.local_set_new_weight, self.learner.get_weights())
 
     def record_collector_file_completion(self, version: int) -> None:
         self.file_completions[version].append(True)
@@ -435,7 +441,10 @@ class Coordinator(ABC, EnvironmentCallbacks):
         self.learner_thread = self.get_main_thread()
         self.collector_threads = [self.create_thread(self.start_collector, c_creator)
                                   for c_creator in self.collector_creators]
+        self.tester_threads = [self.create_thread(self.start_collector, t_creator)
+                               for t_creator in self.tester_creators]
         [c_thread.run() for c_thread in self.collector_threads]
+        [t_thread.run() for t_thread in self.tester_threads]
         self.learner = self.learner_creator()
         self.sync_weights()
         while True:
@@ -474,10 +483,11 @@ class Process(Thread):
 
 class ProcessBasedCoordinator(Coordinator):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
-                 learner_creator: Callable[[], LearningAgent], cfg: Config):
+                 learner_creator: Callable[[], LearningAgent],
+                 tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
         self.process_configs = cfg['process_configs']
 
-        super().__init__(collector_creators, learner_creator)
+        super().__init__(collector_creators, learner_creator, tester_creators)
 
         self.thread_count = 0
         self.thread_locals = None
@@ -804,6 +814,15 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
                                                 tf.cast(tf.shape(preds_f)[-1], tf.float32)).sample(), axis=-1), preds)
 
 
+def combine_prediction_to_actions(prediction_to_actions: List[Callable], probs: List[int]) -> Callable:
+    assert sum(probs) == 1
+
+    def to_actions(preds: tf.Tensor) -> tf.Tensor:
+        return np.random.choice(prediction_to_actions, 1, False, probs)[0](preds)
+
+    return lambda inp: tf.py_function(to_actions, [inp], tf.int32)
+
+
 def prediction_sampler(predictions: tf.Tensor, actions: tf.Tensor) -> tf.Tensor:
     return tf.expand_dims(tf.gather_nd(predictions, actions, batch_dims=1), axis=-1)
 
@@ -833,7 +852,8 @@ def control_dependencies(inputs) -> tf.Tensor:
     return x
 
 
-def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, LearningAgent]:
+def create_agent(id: int, is_learner: bool, is_tester: bool,
+                 agent_option_probs: List[float]) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
@@ -846,6 +866,8 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     data_file_dir = cfg['data_file_dir']
     logs_dir = cfg['logs_dir']
     weights_file = cfg['weights_file']
+    collectors_apks_path = cfg['collectors_apks_path']
+    testers_apks_path = cfg['testers_apks_path']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -863,7 +885,10 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
     environment_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
+    phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
     collector_configs['file_dir'] = data_file_dir
+    if is_tester:
+        collector_configs['max_file_size'] = 0
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
@@ -898,13 +923,12 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
         output = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
     else:
         input = screen_input
-        output = keras.layers.Lambda(lambda preds:
-                                     prediction_to_action_options[id % len(prediction_to_action_options)]
-                                     (preds))(predictions)
+        output = keras.layers.Lambda(combine_prediction_to_actions(prediction_to_action_options,
+                                                                   agent_option_probs))(predictions)
 
     if not is_learner:
-        logger = CollectorLogger(f'agent_{id}', screen_preprocessor, screen_parser, reward_predictor,
-                                 action_pos_to_screen_pos,
+        logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
+                                 screen_preprocessor, screen_parser, reward_predictor, action_pos_to_screen_pos,
                                  lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
                                                               screen_preprocessor_resize_size_a /
                                                               screen_preprocessor_crop_size_a, np.array([0, 0])),
@@ -937,25 +961,39 @@ def create_agent(id: int, is_learner: bool) -> Union[DataCollectionAgent, Learni
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 
 
+def parse_specs_to_probs(specs: Dict, max_len: int) -> List:
+    return sum([[[spec[1][i] if len(spec[1]) > i else (1 - sum(spec[1])) / (max_len - len(spec[1]))
+                  for i in range(max_len)]] * spec[0]
+                for spec in specs], [])
+
+
 optimizer = 'adam'
 pos_reward = 1
 neg_reward = 0
 with open('configs.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 collectors = cfg['collectors']
+testers = cfg['testers']
 reset_logs = cfg['reset_logs']
 coordinator_configs = cfg['coordinator_configs']
 logs_dir = cfg['logs_dir']
 
-prediction_to_action_options = [globals()[c] for c in collectors]
+prediction_to_action_options = [better_reward_to_action, worse_reward_to_action,
+                                most_certain_reward_to_action, least_certain_reward_to_action,
+                                random_reward_to_action]
+collector_option_probs = parse_specs_to_probs(collectors, len(prediction_to_action_options))
+tester_option_probs = parse_specs_to_probs(testers, len(prediction_to_action_options))
 
 tf.disable_v2_behavior()
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
-    collector_creators = [partial(create_agent, i, False) for i in range(len(prediction_to_action_options))]
-    learner_creator = partial(create_agent, len(collector_creators), True)
-    coord = ProcessBasedCoordinator(collector_creators, learner_creator, cfg['coordinator_configs'])
+    collector_creators = [partial(create_agent, i, False, False, probs)
+                          for i, probs in enumerate(collector_option_probs)]
+    tester_creators = [partial(create_agent, i + len(collector_creators), False, True, probs)
+                       for i, probs in enumerate(tester_option_probs)]
+    learner_creator = partial(create_agent, len(collector_creators) + len(tester_creators), True, False, None)
+    coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 
 # metrics
