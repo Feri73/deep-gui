@@ -674,12 +674,12 @@ class CollectorLogger(EnvironmentCallbacks):
     def calc_diffs(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray):
         global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, src_state)
                                      - RelevantActionEnvironment.crop_state(self, dst_state))
-        action = self.action_for_screen(action[2:]).astype(np.int32)
+        action = self.action_for_screen(action[:2]).astype(np.int32)
         local_diff = np.linalg.norm(
             RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state), action)
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state), [action[1], action[0], None])
             - RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state), action))
+            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state), [action[1], action[0], None]))
         return global_diff, local_diff
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
