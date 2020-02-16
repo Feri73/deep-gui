@@ -689,7 +689,7 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_scalar('Reward', self.rewards)
             self.rewards = []
         if self.local_step % self.image_log_frequency == 0:
-            assert self.action is None
+            # assert self.action is None
             self.action = action
             diffs = self.calc_diffs(src_state, action, dst_state)
             self.log_screen('Screen', src_state, lambda x: x, diffs)
@@ -703,7 +703,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.summary = tf.Summary()
 
     def buffer_preprocessed_screen(self, screen: np.ndarray) -> None:
-        assert self.preprocessed_screen is None
+        # assert self.preprocessed_screen is None
         self.preprocessed_screen = screen
 
     def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable,
