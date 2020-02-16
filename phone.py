@@ -33,6 +33,8 @@ class Phone:
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
         self.apk_names, self.app_names = zip(*[x for x in zip(self.apk_names, self.app_names) if x[1] is not None])
+        self.app_names = list(self.app_names)
+        self.apk_names = list(self.apk_names)
         if not os.path.exists(f'tmp-{device_name}'):
             os.makedirs(f'tmp-{device_name}')
         self.step = 0
