@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 import time
-from typing import Union
+from typing import Union, Optional
 
 import matplotlib.image as mpimg
 import numpy as np
@@ -32,6 +32,7 @@ class Phone:
         self.app_activity_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
+        self.apk_names, self.app_names = zip(*[x for x in zip(self.apk_names, self.app_names) if x[1] is not None])
         if not os.path.exists(f'tmp-{device_name}'):
             os.makedirs(f'tmp-{device_name}')
         self.step = 0
@@ -131,12 +132,15 @@ class Phone:
         # self.adb('shell settings put global transition_animation_scale 0')
         # self.adb('shell settings put global animator_duration_scale 0')
 
-    def get_app_name(self, apk_path: str) -> str:
-        apk_path = os.path.abspath(apk_path)
-        command = f'{self.aapt_path} dump badging "{apk_path}" | grep package'
-        res = subprocess.check_output(command, shell=True).decode('utf-8')
-        regex = re.compile(r'name=\'([^\']+)\'')
-        return regex.search(res).group(1)
+    def get_app_name(self, apk_path: str) -> Optional[str]:
+        try:
+            apk_path = os.path.abspath(apk_path)
+            command = f'{self.aapt_path} dump badging "{apk_path}" | grep package'
+            res = subprocess.check_output(command, shell=True).decode('utf-8')
+            regex = re.compile(r'name=\'([^\']+)\'')
+            return regex.search(res).group(1)
+        except Exception:
+            return None
 
     def save_snapshot(self, name: str) -> None:
         self.adb(f'emu avd snapshot save {name}')
@@ -264,7 +268,7 @@ class DummyPhone:
         br_in = self.points_border_size // 2
         mrg = self.click_validity_margin
         for p, mr in zip(self.points, self.points_margins):
-            if p[0] + mr[0] - br_in + mrg >= y >= p[0] - mr[0] + br_in - mrg and\
+            if p[0] + mr[0] - br_in + mrg >= y >= p[0] - mr[0] + br_in - mrg and \
                     p[1] + mr[1] - br_in + mrg >= x >= p[1] - mr[1] + br_in - mrg:
                 self.screen = None
                 self.screenshot()
