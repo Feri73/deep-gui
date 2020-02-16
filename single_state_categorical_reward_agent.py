@@ -815,7 +815,7 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 
 
 def combine_prediction_to_actions(prediction_to_actions: List[Callable], probs: List[int]) -> Callable:
-    assert sum(probs) == 1
+    assert abs(sum(probs) - 1) < 1e-6
 
     def to_actions(preds: tf.Tensor) -> tf.Tensor:
         return np.random.choice(prediction_to_actions, 1, False, probs)[0](preds)
