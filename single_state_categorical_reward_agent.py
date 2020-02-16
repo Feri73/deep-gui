@@ -973,6 +973,8 @@ pos_reward = 1
 neg_reward = 0
 with open('configs.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
+inter_op_core_count = cfg['inter_op_core_count']
+intra_op_core_count = cfg['intra_op_core_count']
 collectors = cfg['collectors']
 testers = cfg['testers']
 reset_logs = cfg['reset_logs']
@@ -986,6 +988,8 @@ collector_option_probs = parse_specs_to_probs(collectors, len(prediction_to_acti
 tester_option_probs = parse_specs_to_probs(testers, len(prediction_to_action_options))
 
 tf.disable_v2_behavior()
+tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
+tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
@@ -998,3 +1002,4 @@ if __name__ == '__main__':
     coord.start()
 
 # metrics
+# add prints to error callback of agents
