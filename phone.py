@@ -39,6 +39,7 @@ class Phone:
             os.makedirs(f'tmp-{device_name}')
         self.step = 0
         self.visited_activities = set()
+        self.app_in_stack = None
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
@@ -61,13 +62,15 @@ class Phone:
             res = self.adb('shell "dumpsys activity | grep TaskRecord"')
             matches = re.findall(r'.*\* Recent .+: TaskRecord{.+#\d+ .+=(.+) .+StackId=(\d+).*}', res)
             print(f'{datetime.now()}: top app of {self.device_name}: {matches[0][0]}')
+            # test for when force_front = False
+            top_stack_id = matches[0][1]
+            for match in matches:
+                if match[0] == app_name and match[1] == top_stack_id:
+                    self.app_in_stack = app_name
             if force_front:
                 return matches[0][0] == app_name
-            # test for when force_front = False
-            top_stack_id = matches[0][2]
-            for match in matches:
-                if match[0] == app_name and match[2] == top_stack_id:
-                    return True
+            else:
+                return self.app_in_stack == app_name
         except Exception:
             pass
         return False
@@ -173,8 +176,11 @@ class Phone:
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
-        # here, if the message that says "it's only bringing an existing task to the front" appears, do not wait :|
-        time.sleep(self.app_start_wait_time)
+        # this is not the best way i can do it, cuz it needs to make sure i call is_in_app every time i call this
+        if self.app_in_stack == app_name:
+            print('not waiting because the app was already in the stack.')
+        else:
+            time.sleep(self.app_start_wait_time)
 
     def screenshot(self) -> np.ndarray:
         if self.maintain_visited_activities:

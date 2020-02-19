@@ -41,6 +41,7 @@ class RelevantActionEnvironment(Environment):
         self.current_state = None
         self.has_state_changed = True
         self.just_restarted = False
+        self.in_blank_screen = False
 
         self.phone.start_phone()
 
@@ -87,6 +88,7 @@ class RelevantActionEnvironment(Environment):
                 else:
                     self.has_state_changed = False
                     return self.current_state.copy()
+            self.in_blank_screen = True
             raise SystemError("blank screen.")
         return self.current_state.copy()
 
@@ -170,8 +172,9 @@ class RelevantActionEnvironment(Environment):
                     self.phone.open_app(self.phone.app_names[self.cur_app_index])
             except Exception:
                 pass
-        if self.just_restarted or \
+        if self.just_restarted or self.in_blank_screen or \
                 not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+            self.in_blank_screen = False
             try:
                 self.phone.restart()
             except Exception:

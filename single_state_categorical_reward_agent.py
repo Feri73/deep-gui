@@ -531,7 +531,7 @@ class ScreenPreprocessor(keras.layers.Layer):
             axes = [1, 2, 3]
             screens = (screens - tf.reduce_min(screens, axis=axes, keep_dims=True)) / \
                       (tf.reduce_max(screens, axis=axes, keep_dims=True) -
-                       tf.reduce_min(screens, axis=axes, keep_dims=True))
+                       tf.reduce_min(screens, axis=axes, keep_dims=True) + 1e-6)
         if self.equalize_background:
             if screens_shape[-1] != 1:
                 raise AttributeError('cannot equalize background for colored images.')
