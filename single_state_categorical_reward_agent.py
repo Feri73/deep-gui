@@ -4,19 +4,21 @@ import os
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from datetime import datetime
 from functools import partial
 from io import BytesIO
 from pathlib import Path
 from queue import Empty
 from typing import Any, List, Dict, Tuple, Callable, Optional, Union
 
+import matplotlib.cm as cm
 import numpy as np
+import scipy.misc
 import tensorflow as tf
 import tensorflow.keras as keras
 import yaml
-import matplotlib.cm as cm
-import scipy.misc
 from PIL import Image, ImageDraw
+from sklearn.cluster import AgglomerativeClustering
 
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
 from phone import DummyPhone, Phone
@@ -72,12 +74,13 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
         self.max_episodes = cfg['max_episodes']
         self.max_file_size = cfg['max_file_size']
         self.file_dir = cfg['file_dir']
+        version_start = cfg['version_start']
 
         self.id = id
         self.model = model
         self.example_episode = example_episode
 
-        self.current_file_version = 0
+        self.current_file_version = version_start - 1
         self.current_file = None
         self.current_file_size = 0
         self.reward_indices = defaultdict(list)
@@ -164,7 +167,7 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
 
 
 class LearningAgent:
-    def __init__(self, id: int, model: keras.Model, cfg: Config):
+    def __init__(self, id: int, model: keras.Model, distorter: Callable, cfg: Config):
         self.file_dir = cfg['file_dir']
         self.shuffle = cfg['shuffle']
         self.correct_distributions = cfg['correct_distributions']
@@ -177,6 +180,7 @@ class LearningAgent:
         self.id = id
         # plot the model (maybe here or where it's created)
         self.model = model
+        self.distorter = distorter
 
         # self.log_callback = keras.callbacks.TensorBoard(f'{self.logs_dir}{os.sep}learner_{self.id}')
 
@@ -241,7 +245,7 @@ class LearningAgent:
                                                              if current_file_i > 0 else 0)))
         return index_to_bucket_i
 
-    def read_episode_files(self, version: int) -> \
+    def read_episode_files(self, version: Union[int, List[int]]) -> \
             Tuple[List[EpisodeFile], List[int], List[Dict[np.ndarray, List[int]]], Episode]:
         example_episode = None
 
@@ -259,7 +263,7 @@ class LearningAgent:
 
         return episode_files, file_sizes, file_reward_indices_list, example_episode
 
-    def create_training_data(self, version: int) -> Tuple[Optional[Callable], int]:
+    def create_training_data(self, version: Union[int, List[int]]) -> Tuple[Optional[Callable], int]:
         episode_files, file_sizes, file_reward_indices_list, example_episode = self.read_episode_files(version)
 
         total_reward_indices = self.merge_reward_indices_list(file_reward_indices_list)
@@ -308,6 +312,7 @@ class LearningAgent:
                             file_i = augmented_data[position - total_size][0]
                             data_i = augmented_data[position - total_size][1]
                         episode = episode_files[file_i].get(data_i)
+                        episode = self.distorter(episode)
                         x['state'][i] = episode.state
                         x['action'][i] = episode.action
                         x['result'][i] = episode.result
@@ -318,22 +323,14 @@ class LearningAgent:
                     current_positions_i = min(training_size, current_positions_i + self.batch_size) % training_size
 
         return generator, training_size
-        # data_index = 0
-        # for episode_file, file_size in zip(episode_files, file_sizes):
-        #     for file_ind in range(file_size):
-        #         training_data_file.set(episode_file.get(file_ind), positions[data_index])
-        #         data_index += 1
-        #
-        # for data_i, data in enumerate(augmented_data):
-        #     training_data_file.set(episode_files[data[0]].get(data[1]), positions[total_size + data_i])
 
     # add logs
-    def learn(self, version: int) -> None:
+    def learn(self, version: Union[int, List[int]]) -> None:
         generator, data_size = self.create_training_data(version)
         if generator is None:
-            print(f'The experience version {version} is not expressive enough to learn from.')
+            print(f'{datetime.now()}: The experience version {version} is not expressive enough to learn from.')
         else:
-            print(f'starting learning for experience version {version}')
+            print(f'{datetime.now()}: starting learning for experience version {version}')
             data = generator()
             checkpoint_callback = keras.callbacks.ModelCheckpoint(f'{self.save_dir}/{version}', monitor='loss',
                                                                   save_best_only=False, save_weights_only=True,
@@ -351,8 +348,8 @@ class ThreadLocals:
         self.collector = None
         self.new_weight = None
 
-    def pop_and_run_next(self, *local_args) -> None:
-        self.thread.pop_and_run_next(*local_args)
+    def pop_and_run_next(self, *local_args, wait=False) -> None:
+        self.thread.pop_and_run_next(*local_args, wait=wait)
 
 
 class Thread(ABC):
@@ -367,14 +364,16 @@ class Thread(ABC):
     # this can only be accessed from the thread associated to this object
     # this method should have a wait input (remember to change the MultiprocessThread implementation if change this)
     @abstractmethod
-    def pop_and_run_next(self, *local_args) -> None:
+    def pop_and_run_next(self, *local_args, wait=False) -> None:
         pass
 
 
 class Coordinator(ABC, EnvironmentCallbacks):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
                  learner_creator: Callable[[], LearningAgent],
-                 tester_creators: List[Callable[[], DataCollectionAgent]]):
+                 tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
+        self.collector_version_start = cfg['collector_version_start']
+
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
         self.tester_creators = tester_creators
@@ -399,7 +398,6 @@ class Coordinator(ABC, EnvironmentCallbacks):
         pass
 
     def start_collector(self, collector_creator: Callable[[], DataCollectionAgent], thread: Thread) -> None:
-        time.sleep(2)
         collector = collector_creator()
         collector.add_on_file_completed_callbacks(self.on_collector_file_completed)
         collector.environment.add_callback(self)
@@ -414,6 +412,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
     def local_set_new_weight(self, new_weight: List[tf.Tensor]) -> None:
         self.get_thread_locals().new_weight = new_weight
+        print(f'{datetime.now()}: collector {self.get_thread_locals().collector.id} synced weights.')
 
     # make these functions with function decorator for coolness :D
     def local_update_collector_weight(self):
@@ -423,6 +422,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
             locals.new_weight = None
 
     def sync_weights(self) -> None:
+        print(f'{datetime.now()}: sending weights to workers.')
         for collector_thread in self.collector_threads:
             collector_thread.add_to_run_queue(Coordinator.local_set_new_weight, self.learner.get_weights())
         for tester_thread in self.tester_threads:
@@ -446,6 +446,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
         [c_thread.run() for c_thread in self.collector_threads]
         [t_thread.run() for t_thread in self.tester_threads]
         self.learner = self.learner_creator()
+        self.learner.learn(list(range(self.collector_version_start)))
         self.sync_weights()
         while True:
             self.learner_thread.pop_and_run_next(self)
@@ -473,9 +474,12 @@ class Process(Thread):
     def run(self) -> None:
         self.process.start()
 
-    def pop_and_run_next(self, *local_args) -> None:
+    def pop_and_run_next(self, *local_args, wait=False) -> None:
         try:
-            func, args = self.queue.get_nowait()
+            if wait:
+                func, args = self.queue.get()
+            else:
+                func, args = self.queue.get_nowait()
             func(*local_args, *args)
         except Empty:
             pass
@@ -487,7 +491,7 @@ class ProcessBasedCoordinator(Coordinator):
                  tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
         self.process_configs = cfg['process_configs']
 
-        super().__init__(collector_creators, learner_creator, tester_creators)
+        super().__init__(collector_creators, learner_creator, tester_creators, cfg)
 
         self.thread_count = 0
         self.thread_locals = None
@@ -641,8 +645,8 @@ def cond_flush(step: int, values: np.ndarray = None, buffer_logger: 'BufferLogge
 
 class CollectorLogger(EnvironmentCallbacks):
     def __init__(self, name: str, screen_preprocessor: ScreenPreprocessor, screen_parser: ScreenParser,
-                 reward_predictor: RewardPredictor, action_for_screen: Callable,
-                 to_preprocessed_coord: Callable, cfg: Config):
+                 reward_predictor: RewardPredictor, preds_clusterer: 'PredictionClusterer',
+                 action_for_screen: Callable, to_preprocessed_coord: Callable, cfg: Config):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.dir = cfg['dir']
@@ -657,19 +661,36 @@ class CollectorLogger(EnvironmentCallbacks):
         self.rewards = []
         self.action = None
         self.preprocessed_screen = None
+        self.prediction = None
+        self.clustering = None
+        self.scalars = {}
         self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{name}')
         self.summary = tf.Summary()
 
+        preds_clusterer.add_callback(self.on_new_clustering)
         self.dependencies = [
             BufferLogger(self.image_log_frequency,
-                         self.buffer_preprocessed_screen, False)(screen_preprocessor.output[0]),
-            BufferLogger(self.image_log_frequency, self.log_predictions, False)(reward_predictor.output[0]),
+                         self.on_new_preprocessed_screen, False)(screen_preprocessor.output[0]),
+            BufferLogger(self.image_log_frequency, self.on_new_prediction, False)(reward_predictor.output[0]),
             BufferLogger(self.scalar_log_frequency,
-                         partial(self.log_scalar, 'Predictions Mean'), True)(tf.reduce_mean(reward_predictor.output[0]))
+                         partial(self.on_new_scalar,
+                                 'Predictions Mean'), True)(tf.reduce_mean(reward_predictor.output[0])),
+            BufferLogger(self.scalar_log_frequency,
+                         partial(self.on_new_scalar,
+                                 'Predictions Std'), True)(tf.math.reduce_std(reward_predictor.output[0]))
         ]
 
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
+
+    def on_new_clustering(self, clickables: tf.Tensor, clusters: np.ndarray) -> None:
+        self.clustering = (clickables.numpy(), clusters)
+
+    def on_new_prediction(self, prediction: np.ndarray) -> None:
+        self.prediction = prediction
+
+    def on_new_scalar(self, name: str, values: List[np.ndarray]) -> None:
+        self.scalars[name] = values
 
     def calc_diffs(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray):
         global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, src_state)
@@ -695,14 +716,19 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_screen('Screen', src_state, lambda x: x, diffs)
             self.log_screen('Preprocessed Screen', (self.preprocessed_screen * 255).astype(np.uint8),
                             self.to_preprocessed_coord, diffs)
+            self.log_predictions(self.prediction, self.clustering)
+        for name in self.scalars:
+            self.log_scalar(name, self.scalars[name])
         self.action = None
         self.preprocessed_screen = None
+        self.clustering = None
+        self.scalars = {}
 
-    def on_episode_end(self, premature: bool) -> None:
+    def on_wait(self) -> None:
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
 
-    def buffer_preprocessed_screen(self, screen: np.ndarray) -> None:
+    def on_new_preprocessed_screen(self, screen: np.ndarray) -> None:
         # assert self.preprocessed_screen is None
         self.preprocessed_screen = screen
 
@@ -748,10 +774,19 @@ class CollectorLogger(EnvironmentCallbacks):
         draw.text((0, 16), f'local: {local_diff}', (0, 255, 0))
         return np.array(image)
 
-    def log_predictions(self, pred: np.ndarray) -> None:
+    def log_predictions(self, pred: np.ndarray, clustering: Tuple[np.ndarray, np.ndarray]) -> None:
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
         pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
+        if clustering is not None:
+            prev_size = pred.shape[:2]
+            new_size = self.preprocessed_screen.shape[:2]
+            pred = Image.fromarray(np.uint8(pred))
+            pred = pred.resize(new_size)
+            draw = ImageDraw.Draw(pred)
+            for cluster in zip(*clustering):
+                draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
+            pred = np.array(pred)
         self.log_image('Predictions', pred)
 
     def log_image(self, name: str, image: np.ndarray) -> None:
@@ -814,7 +849,42 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
                                                 tf.cast(tf.shape(preds_f)[-1], tf.float32)).sample(), axis=-1), preds)
 
 
-def combine_prediction_to_actions(prediction_to_actions: List[Callable], probs: List[int]) -> Callable:
+class PredictionClusterer:
+    def __init__(self, clickable_threshold: float, distance_threshold: float):
+        self.clickable_threshold = clickable_threshold
+        self.distance_threshold = distance_threshold
+
+        self.callbacks = []
+
+    def add_callback(self, callback: Callable) -> None:
+        self.callbacks.append(callback)
+
+    def __call__(self, preds: tf.Tensor) -> tf.Tensor:
+        if preds.shape[-1] > 1:
+            raise NotImplementedError('Currently cannot use clustering reward to action for actions other than click.')
+        if preds.shape[0] > 1:
+            raise NotImplementedError('cluster reward is not implemented for batch size > 1.')
+        preds_old, preds = preds, preds[0]
+        clickables = tf.cast(tf.where(preds > self.clickable_threshold), tf.int32)
+        if len(clickables) == 0:
+            return random_reward_to_action(preds_old)
+        if len(clickables) == 1:
+            chosen_clickable = clickables[0]
+        else:
+            clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=self.distance_threshold,
+                                                compute_full_tree=True, linkage='single')
+            clusters = clusterer.fit_predict(clickables)
+            chosen_cluster = np.random.randint(0, clusterer.n_clusters_)
+            chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster)
+            chosen_clickable_i = most_probable_weighted_policy_user(
+                tf.nn.softmax(tf.gather_nd(preds, chosen_clickables)))
+            chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
+            for callback in self.callbacks:
+                callback(clickables, clusters)
+        return tf.expand_dims(chosen_clickable, axis=0)
+
+
+def combine_prediction_to_actions(prediction_to_actions: List[Callable], probs: List[float]) -> Callable:
     assert abs(sum(probs) - 1) < 1e-6
 
     def to_actions(preds: tf.Tensor) -> tf.Tensor:
@@ -845,6 +915,17 @@ def transform_linearly(coord: np.ndarray, ratio: np.ndarray, offset: np.ndarray,
     return res
 
 
+# maybe log some of these
+def distort_episode(episode: Episode, distort_color_probability: float) -> Episode:
+    color_order = np.arange(3)
+    if np.random.rand() < distort_color_probability:
+        while np.all(color_order == np.arange(3)):
+            color_order = np.random.permutation(3)
+    state = episode.state.copy()[:, :, color_order]
+    # note that I am not distorting the result here. If I use it I have to distort it too.
+    return Episode(state, episode.action.copy(), episode.reward.copy(), episode.result.copy())
+
+
 def control_dependencies(inputs) -> tf.Tensor:
     x, dependencies = inputs
     with tf.control_dependencies(dependencies):
@@ -868,6 +949,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     weights_file = cfg['weights_file']
     collectors_apks_path = cfg['collectors_apks_path']
     testers_apks_path = cfg['testers_apks_path']
+    distort_color_probability = cfg['distort_color_probability']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -924,12 +1006,13 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
         output = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
     else:
         input = screen_input
-        output = keras.layers.Lambda(combine_prediction_to_actions(prediction_to_action_options,
+        built_prediction_to_action_options = [prediction_to_action_options[0]()] + prediction_to_action_options[1:]
+        output = keras.layers.Lambda(combine_prediction_to_actions(built_prediction_to_action_options,
                                                                    agent_option_probs))(predictions)
 
-    if not is_learner:
         logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
-                                 screen_preprocessor, screen_parser, reward_predictor, action_pos_to_screen_pos,
+                                 screen_preprocessor, screen_parser, reward_predictor,
+                                 built_prediction_to_action_options[0], action_pos_to_screen_pos,
                                  lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
                                                               screen_preprocessor_resize_size_a /
                                                               screen_preprocessor_crop_size_a, np.array([0, 0])),
@@ -957,7 +1040,9 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
         return env
 
     if is_learner:
-        return LearningAgent(id, model, learner_configs)
+        return LearningAgent(id, model,
+                             partial(distort_episode, distort_color_probability=distort_color_probability),
+                             learner_configs)
     else:
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 
@@ -973,23 +1058,25 @@ pos_reward = 1
 neg_reward = 0
 with open('configs.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
-inter_op_core_count = cfg['inter_op_core_count']
-intra_op_core_count = cfg['intra_op_core_count']
 collectors = cfg['collectors']
 testers = cfg['testers']
 reset_logs = cfg['reset_logs']
 coordinator_configs = cfg['coordinator_configs']
 logs_dir = cfg['logs_dir']
+cluster_clickable_threshold = cfg['clustering_clickable_threshold']
+cluster_distance_threshold = cfg['cluster_distance_threshold']
+collector_version_start = cfg['collector_configs']['version_start']
 
-prediction_to_action_options = [better_reward_to_action, worse_reward_to_action,
-                                most_certain_reward_to_action, least_certain_reward_to_action,
-                                random_reward_to_action]
+coordinator_configs['collector_version_start'] = collector_version_start
+
+prediction_to_action_options = [lambda: PredictionClusterer(cluster_clickable_threshold, cluster_distance_threshold),
+                                better_reward_to_action, worse_reward_to_action, most_certain_reward_to_action,
+                                least_certain_reward_to_action, random_reward_to_action]
 collector_option_probs = parse_specs_to_probs(collectors, len(prediction_to_action_options))
 tester_option_probs = parse_specs_to_probs(testers, len(prediction_to_action_options))
 
 tf.disable_v2_behavior()
-tf.config.threading.set_inter_op_parallelism_threads(inter_op_core_count)
-tf.config.threading.set_intra_op_parallelism_threads(intra_op_core_count)
+os.environ["KMP_AFFINITY"] = "verbose"
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)

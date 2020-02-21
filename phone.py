@@ -178,7 +178,7 @@ class Phone:
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
         # this is not the best way i can do it, cuz it needs to make sure i call is_in_app every time i call this
         if self.app_in_stack == app_name:
-            print('not waiting because the app was already in the stack.')
+            print(f'{datetime.now()}: not waiting because the app was already in the stack in #{self.device_name}')
         else:
             time.sleep(self.app_start_wait_time)
 
