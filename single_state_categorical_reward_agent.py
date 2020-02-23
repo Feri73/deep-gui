@@ -266,6 +266,9 @@ class LearningAgent:
     def create_training_data(self, version: Union[int, List[int]]) -> Tuple[Optional[Callable], int]:
         episode_files, file_sizes, file_reward_indices_list, example_episode = self.read_episode_files(version)
 
+        if len(episode_files) == 0:
+            return None, 0
+
         total_reward_indices = self.merge_reward_indices_list(file_reward_indices_list)
         if self.correct_distributions:
             less_represented_reward, augmented_size = self.correct_distribution(total_reward_indices)
@@ -578,6 +581,23 @@ class ScreenParser(keras.layers.Layer):
         return screens
 
 
+class UNetScreenParser(keras.layers.Layer):
+    def __init__(self, cfg: Config, **kwargs):
+        self.output_layer_names = cfg['output_layer_names']
+        self.inner_configs = cfg['inner_configs']
+        super().__init__(**kwargs)
+        self.encoder = None
+
+    def build(self, input_shape):
+        net = keras.applications.MobileNetV2(input_shape=tuple(int(x) for x in input_shape[1:]),
+                                             include_top=False, **self.inner_configs)
+        self.encoder = keras.Model(inputs=net.input,
+                                   outputs=[net.get_layer(name).output for name in self.output_layer_names])
+
+    def call(self, screens, **kwargs):
+        return self.encoder(screens)
+
+
 class RewardPredictor(keras.layers.Layer):
     def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
         super().__init__(**kwargs)
@@ -599,6 +619,62 @@ class RewardPredictor(keras.layers.Layer):
         parsed_screens = self.last_layer(parsed_screens)
         assert tuple(map(int, (parsed_screens.shape[1:-1]))) == self.prediction_shape
         return parsed_screens
+
+
+class UNetRewardPredictor(keras.layers.Layer):
+    def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
+        self.filter_nums = cfg['filter_nums']
+        self.kernel_sizes = cfg['kernel_sizes']
+        self.stride_sizes = cfg['stride_sizes']
+        self.padding_types = cfg['padding_types']
+        self.prediction_shape = tuple(cfg['prediction_shape'])
+
+        super().__init__(**kwargs)
+
+        self.action_type_count = action_type_count
+        self.reward_categories_count = reward_categories_count
+
+        self.decoders = None
+        self.last_layer = None
+
+        if self.reward_categories_count != 2:
+            raise NotImplementedError('For now only support binary rewards.')
+
+    @staticmethod
+    def deconv(filters: int, size: int, stride: int, padding: str, activation: str, normalization: bool):
+        initializer = tf.random_normal_initializer(0., 0.02)
+        result = tf.keras.Sequential()
+        result.add(tf.keras.layers.Conv2DTranspose(filters, size, stride, padding, activation=activation,
+                                                   kernel_initializer=initializer, use_bias=False))
+        if normalization:
+            result.add(keras.layers.BatchNormalization())
+        return result
+
+    @staticmethod
+    def val2list(val, size: int) -> list:
+        return val if isinstance(val, list) else [val] * size
+
+    def build(self, input_shape):
+        assert isinstance(input_shape, list)
+        self.filter_nums = self.val2list(self.filter_nums, len(input_shape) - 1)
+        self.kernel_sizes = self.val2list(self.kernel_sizes, len(input_shape))
+        self.stride_sizes = self.val2list(self.stride_sizes, len(input_shape))
+        self.padding_types = self.val2list(self.padding_types, len(input_shape))
+        self.decoders = [self.deconv(filter, size, stride, padding, 'relu', True) for filter, size, stride, padding in
+                         zip(self.filter_nums, self.kernel_sizes[:-1], self.stride_sizes[:-1], self.padding_types[:-1])]
+        self.last_layer = self.deconv(self.action_type_count, self.kernel_sizes[-1], self.stride_sizes[-1],
+                                      self.padding_types[-1], 'sigmoid', False)
+
+    def call(self, parsed_screens_layers, **kwargs):
+        hidden = parsed_screens_layers[0]
+        skips = parsed_screens_layers[1:]
+        for decoder, skip in zip(self.decoders, skips):
+            hidden = decoder(hidden)
+            concat = tf.keras.layers.Concatenate()
+            hidden = concat([hidden, skip])
+        result = self.last_layer(hidden)
+        assert tuple(map(int, (result.shape[1:-1]))) == self.prediction_shape
+        return result
 
 
 class BufferLogger(keras.layers.Layer):
@@ -939,9 +1015,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
     screen_preprocessor_configs = cfg['screen_preprocessor_configs']
-    reward_predictor_configs = cfg['reward_predictor_configs']
     phone_configs = cfg['phone_configs']
-    screen_parser_configs = cfg['screen_parser_configs']
     collector_logger_configs = cfg['collector_logger_configs']
     dummy_mode = cfg['dummy_mode']
     data_file_dir = cfg['data_file_dir']
@@ -950,6 +1024,9 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     collectors_apks_path = cfg['collectors_apks_path']
     testers_apks_path = cfg['testers_apks_path']
     distort_color_probability = cfg['distort_color_probability']
+    use_unet = cfg['use_unet']
+    screen_parser_configs = cfg[f'{"unet" if use_unet else ""}_screen_parser_configs']
+    reward_predictor_configs = cfg[f'{"unet" if use_unet else ""}_reward_predictor_configs']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -979,6 +1056,9 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     collector_logger_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     collector_logger_configs['crop_size'] = screen_preprocessor_crop_size
 
+    screen_parser_type = UNetScreenParser if use_unet else ScreenParser
+    reward_predictor_type = UNetRewardPredictor if use_unet else RewardPredictor
+
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
     screen_preprocessor_crop_size_a = np.array(screen_preprocessor_crop_size)
@@ -995,8 +1075,8 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
                                       name='state', dtype=example_episode.state.dtype)
 
     screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs)
-    screen_parser = ScreenParser(screen_parser_configs)
-    reward_predictor = RewardPredictor(action_type_count, 2, reward_predictor_configs)
+    screen_parser = screen_parser_type(screen_parser_configs)
+    reward_predictor = reward_predictor_type(action_type_count, 2, reward_predictor_configs)
 
     predictions = reward_predictor(screen_parser(screen_preprocessor(screen_input)))
     if is_learner:
