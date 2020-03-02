@@ -130,10 +130,12 @@ class RelevantActionEnvironment(Environment):
             if not did_action:
                 wait_action()
                 did_action = True
+        if not did_action:
+            wait_action()
         res = np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0)
         first_animation = np.where(res == 0)
         first_animation = None if len(first_animation[0]) == 0 else next(zip(*np.where(res == 0)))
-        print(f'{datetime.now()}: took {len(states)} screenshots in device #{self.phone.device_name} '
+        print(f'{datetime.now()}: took {len(states)} screenshots in {self.phone.device_name} '
               f' for animation monitoring. First animation is at {first_animation}.')
         return res
 
@@ -151,6 +153,8 @@ class RelevantActionEnvironment(Environment):
 
         if self.changed_from_last:
             self.animation_mask = self.get_animation_mask(wait_action)
+        else:
+            wait_action()
 
         last_state = self.read_state()
 
@@ -180,7 +184,7 @@ class RelevantActionEnvironment(Environment):
                 break
             tmp_time = tm.time()
 
-        print(f'{datetime.now()}: took {screenshot_count} screenshots in device #{self.phone.device_name} '
+        print(f'{datetime.now()}: took {screenshot_count} screenshots in {self.phone.device_name} '
               f'to compute reward.'
               f' Screen {f"changed at {changed_screenshot_num}" if self.changed_from_last else "did not change"}.')
 

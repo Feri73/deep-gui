@@ -272,9 +272,10 @@ class DummyPhone:
                 point_top_left[1]:point_bottom_right[1]] = point_color
         return (self.screen * 255).astype(np.uint8)
 
-    def send_event(self, x: int, y: int, type: int) -> None:
+    def send_event(self, x: int, y: int, type: int) -> np.ndarray:
         if type != 0:
             raise NotImplementedError()
+        bef_screen = self.screenshot()
         br_in = self.points_border_size // 2
         mrg = self.click_validity_margin
         for p, mr in zip(self.points, self.points_margins):
@@ -283,3 +284,4 @@ class DummyPhone:
                 self.screen = None
                 self.screenshot()
                 break
+        return bef_screen
