@@ -3,7 +3,7 @@ import yaml
 import os
 from html.parser import HTMLParser
 
-file_path = input('Enter html file path:')
+file_path = input('Enter html file path: ')
 with open('setting.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 apks_path = cfg['apks_path']

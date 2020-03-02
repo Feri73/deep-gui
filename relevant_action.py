@@ -2,7 +2,7 @@ import time
 import time as tm
 import traceback
 from datetime import datetime
-from typing import Tuple, Callable, Any
+from typing import Tuple, Callable, Any, Optional
 
 import numpy as np
 
@@ -20,7 +20,6 @@ class RelevantActionEnvironment(Environment):
 
         self.steps_per_app = cfg['steps_per_app']
         self.steps_per_episode = cfg['steps_per_episode']
-        self.action_wait_time = cfg['action_wait_time']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
         self.pos_reward = cfg['pos_reward']
@@ -29,9 +28,12 @@ class RelevantActionEnvironment(Environment):
         self.force_app_on_top = cfg['force_app_on_top']
         self.in_app_check_trials = cfg['in_app_check_trials']
         self.black_screen_trials = cfg['black_screen_trials']
-        self.local_equality_threshold = cfg['local_equality_threshold']
-        self.local_change_size = cfg['local_change_size']
         self.global_equality_threshold = cfg['global_equality_threshold']
+        self.pixel_equality_threshold = cfg['pixel_equality_threshold']
+        self.animation_monitor_time = cfg['animation_monitor_time']
+        self.action_max_wait_time = cfg['action_max_wait_time']
+        self.action_offset_wait_time = cfg['action_offset_wait_time']
+        self.action_freeze_wait_time = cfg['action_freeze_wait_time']
         shuffle = cfg['shuffle']
         assert self.steps_per_app % self.steps_per_episode == 0
 
@@ -42,6 +44,8 @@ class RelevantActionEnvironment(Environment):
         self.has_state_changed = True
         self.just_restarted = False
         self.in_blank_screen = False
+        self.animation_mask = None
+        self.changed_from_last = True
 
         self.phone.start_phone()
 
@@ -72,6 +76,7 @@ class RelevantActionEnvironment(Environment):
             #     self.phone.load_snapshot('fresh')
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
             self.has_state_changed = True
+            self.changed_from_last = True
 
     def is_finished(self) -> bool:
         return self.finished
@@ -81,7 +86,7 @@ class RelevantActionEnvironment(Environment):
             trials = self.black_screen_trials
             while trials > 0:
                 self.current_state = self.phone.screenshot()
-                if self.are_states_equal(np.zeros_like(self.current_state), self.current_state, 1.0):
+                if self.are_states_equal(np.zeros_like(self.current_state), self.current_state, None):
                     trials -= 1
                     if trials > 0:
                         time.sleep(.5)
@@ -97,27 +102,40 @@ class RelevantActionEnvironment(Environment):
                self.crop_top_left[0]:self.crop_top_left[0] + self.crop_size[0],
                self.crop_top_left[1]:self.crop_top_left[1] + self.crop_size[1]]
 
-    def are_states_equal(self, s1: np.ndarray, s2: np.ndarray, threshold: float) -> bool:
-        return np.linalg.norm(self.crop_state(s1) - self.crop_state(s2)) <= threshold
+    def are_states_equal(self, s1: np.ndarray, s2: np.ndarray, mask: Optional[np.ndarray]) -> bool:
+        mask = self.crop_state(np.ones_like(s1) if mask is None else mask)
+        return np.linalg.norm(self.crop_state(s1) * mask - self.crop_state(s2) * mask) <= self.global_equality_threshold
 
     def send_action(self, action: Tuple[int, int, int]):
         trials = self.in_app_check_trials
         while trials > 0:
             if self.step % self.steps_per_in_app_check != 0 or \
                     self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
-                self.phone.send_event(*action)
+                res = self.phone.send_event(*action)
                 self.has_state_changed = True
                 self.just_restarted = False
-                return
+                return res
             trials -= 1
             if trials > 0:
                 time.sleep(1)
         raise SystemError("invalid phone state.")
 
-    # this may have to be revised if i add other types of actions
-    def crop_to_local(self, state: np.ndarray, action: Tuple[int, int, int]) -> np.ndarray:
-        return state[max(0, action[1] - self.local_change_size // 2):action[1] + self.local_change_size // 2,
-               max(0, action[0] - self.local_change_size // 2):action[0] + self.local_change_size // 2]
+    def get_animation_mask(self, wait_action: Callable) -> np.ndarray:
+        start_time = tm.time()
+        states = []
+        did_action = False
+        while tm.time() - start_time < self.animation_monitor_time:
+            self.has_state_changed = True
+            states.append(self.read_state())
+            if not did_action:
+                wait_action()
+                did_action = True
+        res = np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0)
+        first_animation = np.where(res == 0)
+        first_animation = None if len(first_animation[0]) == 0 else next(zip(*np.where(res == 0)))
+        print(f'{datetime.now()}: took {len(states)} screenshots in device #{self.phone.device_name} '
+              f' for animation monitoring. First animation is at {first_animation}.')
+        return res
 
     # extend to actions other than click
     # remember to check if the phone is still in the correct app and other wise restart it
@@ -131,29 +149,45 @@ class RelevantActionEnvironment(Environment):
         if self.step % self.steps_per_episode == 0:
             self.finished = True
 
+        if self.changed_from_last:
+            self.animation_mask = self.get_animation_mask(wait_action)
+
         last_state = self.read_state()
 
-        self.send_action(action)
+        change_state = self.send_action(action)
+        action_time = change_time = tm.time()
+        screenshot_count = 1
+        changed_screenshot_num = 0
 
-        precomp_time = tm.time()
-        wait_action()
-        poscomp_time = tm.time()
-        comp_time = poscomp_time - precomp_time
-        if self.action_wait_time - comp_time > 0:
-            tm.sleep(self.action_wait_time - comp_time)
+        self.changed_from_last = not self.are_states_equal(last_state, change_state, self.animation_mask)
+        if self.changed_from_last:
+            changed_screenshot_num = screenshot_count
 
-        cur_state = self.read_state()
-        local_cur = self.crop_to_local(self.crop_state(cur_state), action)
-        local_last = self.crop_to_local(self.crop_state(last_state), action)
+        tmp_time = tm.time()
+        while tmp_time - action_time < self.action_max_wait_time:
+            self.has_state_changed = True
+            tmp_state = self.read_state()
+            screenshot_count += 1
+            # remember having animation_mask in this comparison is just an approximation to end this while sooner
+            if not self.are_states_equal(tmp_state, change_state, self.animation_mask):
+                change_time = tmp_time
+                change_state = tmp_state
+                if not self.changed_from_last:
+                    changed_screenshot_num = screenshot_count
+                self.changed_from_last = True
+            if tmp_time - action_time >= self.action_offset_wait_time and \
+                    tmp_time - change_time >= self.action_freeze_wait_time:
+                break
+            tmp_time = tm.time()
 
-        if self.are_states_equal(local_cur, local_last, self.local_equality_threshold):
-            if self.are_states_equal(self.crop_state(cur_state), self.crop_state(last_state),
-                                     self.global_equality_threshold):
-                reward = self.neg_reward
-            else:
-                reward = self.pos_reward
-        else:
+        print(f'{datetime.now()}: took {screenshot_count} screenshots in device #{self.phone.device_name} '
+              f'to compute reward.'
+              f' Screen {f"changed at {changed_screenshot_num}" if self.changed_from_last else "did not change"}.')
+
+        if self.changed_from_last:
             reward = self.pos_reward
+        else:
+            reward = self.neg_reward
 
         return reward
 
@@ -182,3 +216,4 @@ class RelevantActionEnvironment(Environment):
             self.phone.open_app(self.phone.app_names[self.cur_app_index])
             self.just_restarted = not self.just_restarted
         self.has_state_changed = True
+        self.changed_from_last = True

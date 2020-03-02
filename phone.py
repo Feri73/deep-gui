@@ -193,13 +193,15 @@ class Phone:
         os.remove(image_path)
         return (res * 255).astype(np.uint8)
 
-    def send_event(self, x: int, y: int, type: int) -> None:
+    def send_event(self, x: int, y: int, type: int) -> np.ndarray:
         if type != 0:
             raise NotImplementedError()
         # better logging
         print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')
         self.adb(f'emu event mouse {x} {y} 0 1')
+        res = self.screenshot()
         self.adb(f'emu event mouse {x} {y} 0 0')
+        return res
 
 
 class DummyPhone:

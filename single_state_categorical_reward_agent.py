@@ -171,6 +171,7 @@ class LearningAgent:
         self.file_dir = cfg['file_dir']
         self.shuffle = cfg['shuffle']
         self.correct_distributions = cfg['correct_distributions']
+        self.augmenting_correction = cfg['augmenting_correction']
         self.batch_size = cfg['batch_size']
         self.epochs_per_version = cfg['epochs_per_version']
         self.logs_dir = cfg['logs_dir']
@@ -272,17 +273,27 @@ class LearningAgent:
         total_reward_indices = self.merge_reward_indices_list(file_reward_indices_list)
         if self.correct_distributions:
             less_represented_reward, augmented_size = self.correct_distribution(total_reward_indices)
+            more_represented_reward = [x for x in list(total_reward_indices.keys()) if x != less_represented_reward][0]
         else:
             augmented_size = 0
 
         if augmented_size == -1:
             return None, 0
 
-        total_size = sum(file_sizes)
-        training_size = total_size + augmented_size
-        # training_data_file = EpisodeFile(f'{self.file_dir}/{version}/training', training_size, example_episode, 'w+')
-        positions = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
         position_to_file_i = self.index_to_bucket_i_list(file_sizes)
+
+        total_size = sum(file_sizes)
+        if self.augmenting_correction:
+            training_size = total_size + augmented_size
+        else:
+            training_size = total_size
+        positions = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
+        if not self.augmenting_correction:
+            training_size = total_size - augmented_size
+            if augmented_size > 0:
+                positions = [p for p in positions if position_to_file_i[p] not in
+                             np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                              augmented_size, replace=False).tolist()]
 
         def generator() -> Tuple[Dict[str, np.ndarray], np.ndarray]:
             # if epochs is a lot more than 1, then i should generate a dataset in file instead of this ad hoc method
@@ -294,7 +305,7 @@ class LearningAgent:
                         current_positions_i = 0
                         batch_size = self.batch_size
 
-                    if current_positions_i == 0 and augmented_size > 0:
+                    if current_positions_i == 0 and augmented_size > 0 and self.augmenting_correction:
                         augmented_data_indices = np.random.choice(
                             np.arange(len(total_reward_indices[less_represented_reward])), augmented_size)
                         augmented_data = np.array(total_reward_indices[less_represented_reward])[augmented_data_indices]
@@ -376,6 +387,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
                  learner_creator: Callable[[], LearningAgent],
                  tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
+        self.pre_training = cfg['pre_training']
 
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
@@ -449,7 +461,8 @@ class Coordinator(ABC, EnvironmentCallbacks):
         [c_thread.run() for c_thread in self.collector_threads]
         [t_thread.run() for t_thread in self.tester_threads]
         self.learner = self.learner_creator()
-        self.learner.learn(list(range(self.collector_version_start)))
+        if self.pre_training:
+            self.learner.learn(list(range(self.collector_version_start)))
         self.sync_weights()
         while True:
             self.learner_thread.pop_and_run_next(self)
@@ -726,9 +739,6 @@ class CollectorLogger(EnvironmentCallbacks):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.dir = cfg['dir']
-        self.local_change_size = cfg['local_change_size']
-        self.crop_top_left = cfg['crop_top_left']
-        self.crop_size = cfg['crop_size']
 
         self.action_for_screen = action_for_screen
         self.to_preprocessed_coord = to_preprocessed_coord
@@ -768,17 +778,6 @@ class CollectorLogger(EnvironmentCallbacks):
     def on_new_scalar(self, name: str, values: List[np.ndarray]) -> None:
         self.scalars[name] = values
 
-    def calc_diffs(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray):
-        global_diff = np.linalg.norm(RelevantActionEnvironment.crop_state(self, src_state)
-                                     - RelevantActionEnvironment.crop_state(self, dst_state))
-        action = self.action_for_screen(action[:2]).astype(np.int32)
-        local_diff = np.linalg.norm(
-            RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, src_state), [action[1], action[0], None])
-            - RelevantActionEnvironment.
-            crop_to_local(self, RelevantActionEnvironment.crop_state(self, dst_state), [action[1], action[0], None]))
-        return global_diff, local_diff
-
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
         self.rewards.append(np.array(reward))
@@ -788,10 +787,9 @@ class CollectorLogger(EnvironmentCallbacks):
         if self.local_step % self.image_log_frequency == 0:
             # assert self.action is None
             self.action = action
-            diffs = self.calc_diffs(src_state, action, dst_state)
-            self.log_screen('Screen', src_state, lambda x: x, diffs)
+            self.log_screen('Screen', src_state, lambda x: x)
             self.log_screen('Preprocessed Screen', (self.preprocessed_screen * 255).astype(np.uint8),
-                            self.to_preprocessed_coord, diffs)
+                            self.to_preprocessed_coord)
             self.log_predictions(self.prediction, self.clustering)
         for name in self.scalars:
             self.log_scalar(name, self.scalars[name])
@@ -808,8 +806,7 @@ class CollectorLogger(EnvironmentCallbacks):
         # assert self.preprocessed_screen is None
         self.preprocessed_screen = screen
 
-    def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable,
-                   diffs: Optional[Tuple[float, float]]) -> None:
+    def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable) -> None:
         if self.action[-1] != 0:
             raise NotImplementedError('Only one type of action is supported for now.')
         screen = screen.copy()
@@ -817,38 +814,8 @@ class CollectorLogger(EnvironmentCallbacks):
             screen = np.concatenate([screen] * 3, axis=-1)
         action_p = point_transformer(self.action_for_screen(self.action[:2])).astype(np.int32)
         screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
-        transformed_size_x = np.linalg.norm(point_transformer(np.array([0, 0])) -
-                                            point_transformer(np.array([self.local_change_size, 0])))
-        transformed_size_y = np.linalg.norm(point_transformer(np.array([0, 0])) -
-                                            point_transformer(np.array([0, self.local_change_size])))
-        screen = self.add_local_border(screen, np.array([transformed_size_x, transformed_size_y]), action_p)
 
-        if diffs is not None:
-            screen = self.add_diff_texts(screen, diffs[0], diffs[1])
         self.log_image(name, screen)
-
-    @staticmethod
-    def add_local_border(image: np.ndarray, local_size: np.ndarray, action_p: np.ndarray) -> np.ndarray:
-        local_size_half = (local_size // 2).astype(np.int32)
-        image = image.copy()
-        image[max(0, action_p[0] - local_size_half[0]):action_p[0] + local_size_half[0],
-        max(0, action_p[1] - local_size_half[1])] = [0, 255, 0]
-        image[max(0, action_p[0] - local_size_half[0]):action_p[0] + local_size_half[0],
-        min(image.shape[1] - 1, action_p[1] + local_size_half[1])] = [0, 255, 0]
-        image[max(0, action_p[0] - local_size_half[0]),
-        max(0, action_p[1] - local_size_half[1]):action_p[1] + local_size_half[1]] = [0, 255, 0]
-        image[min(image.shape[0] - 1, action_p[0] + local_size_half[0]),
-        max(0, action_p[1] - local_size_half[1]):action_p[1] + local_size_half[1]] = [0, 255, 0]
-        return image
-
-    @staticmethod
-    def add_diff_texts(image: np.ndarray, global_diff: float, local_diff: float) -> np.ndarray:
-        image = image.copy()
-        image = Image.fromarray(np.uint8(image))
-        draw = ImageDraw.Draw(image)
-        draw.text((0, 0), f'global: {global_diff}', (255, 0, 0))
-        draw.text((0, 16), f'local: {local_diff}', (0, 255, 0))
-        return np.array(image)
 
     def log_predictions(self, pred: np.ndarray, clustering: Tuple[np.ndarray, np.ndarray]) -> None:
         if pred.shape[-1] > 1:
@@ -1034,7 +1001,6 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
     screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
     prediction_shape = reward_predictor_configs['prediction_shape']
-    environment_local_change_size = environment_configs['local_change_size']
 
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
@@ -1052,9 +1018,6 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
-    collector_logger_configs['local_change_size'] = environment_local_change_size
-    collector_logger_configs['crop_top_left'] = screen_preprocessor_crop_top_left
-    collector_logger_configs['crop_size'] = screen_preprocessor_crop_size
 
     screen_parser_type = UNetScreenParser if use_unet else ScreenParser
     reward_predictor_type = UNetRewardPredictor if use_unet else RewardPredictor
