@@ -34,6 +34,7 @@ class RelevantActionEnvironment(Environment):
         self.action_max_wait_time = cfg['action_max_wait_time']
         self.action_offset_wait_time = cfg['action_offset_wait_time']
         self.action_freeze_wait_time = cfg['action_freeze_wait_time']
+        self.screenshots_interval = cfg['screenshots_interval']
         shuffle = cfg['shuffle']
         assert self.steps_per_app % self.steps_per_episode == 0
 
@@ -103,7 +104,7 @@ class RelevantActionEnvironment(Environment):
                self.crop_top_left[1]:self.crop_top_left[1] + self.crop_size[1]]
 
     def are_states_equal(self, s1: np.ndarray, s2: np.ndarray, mask: Optional[np.ndarray]) -> bool:
-        mask = self.crop_state(np.ones_like(s1) if mask is None else mask)
+        mask = np.expand_dims(self.crop_state(np.ones_like(s1[:, :, 0]) if mask is None else mask), axis=-1)
         return np.linalg.norm(self.crop_state(s1) * mask - self.crop_state(s2) * mask) <= self.global_equality_threshold
 
     def send_action(self, action: Tuple[int, int, int]):
@@ -127,16 +128,17 @@ class RelevantActionEnvironment(Environment):
         while tm.time() - start_time < self.animation_monitor_time:
             self.has_state_changed = True
             states.append(self.read_state())
+            tm.sleep(self.screenshots_interval)
             if not did_action:
                 wait_action()
                 did_action = True
         if not did_action:
             wait_action()
-        res = np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0)
+        res = np.any(np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0), axis=-1)
         first_animation = np.where(res == 0)
         first_animation = None if len(first_animation[0]) == 0 else next(zip(*np.where(res == 0)))
         print(f'{datetime.now()}: took {len(states)} screenshots in {self.phone.device_name} '
-              f' for animation monitoring. First animation is at {first_animation}.')
+              f'for animation monitoring. First animation is at {first_animation}.')
         return res
 
     # extend to actions other than click
@@ -171,6 +173,7 @@ class RelevantActionEnvironment(Environment):
         while tmp_time - action_time < self.action_max_wait_time:
             self.has_state_changed = True
             tmp_state = self.read_state()
+            tm.sleep(self.screenshots_interval)
             screenshot_count += 1
             # remember having animation_mask in this comparison is just an approximation to end this while sooner
             if not self.are_states_equal(tmp_state, change_state, self.animation_mask):

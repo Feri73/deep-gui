@@ -73,6 +73,7 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
                  create_environment: Callable[['DataCollectionAgent'], Environment], cfg: Config):
         self.max_episodes = cfg['max_episodes']
         self.max_file_size = cfg['max_file_size']
+        self.meta_save_frequency = cfg['meta_save_frequency']
         self.file_dir = cfg['file_dir']
         version_start = cfg['version_start']
 
@@ -106,13 +107,16 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
     def start(self):
         self.environment.start()
 
+    def dump_meta(self):
+        dump_obj({'max_size': self.max_file_size, 'size': self.current_file_size,
+                  'example': self.example_episode, 'reward_indices': self.reward_indices},
+                 self.current_file.file_name + '.meta')
+
     def reset_file(self, new_file: bool = True):
         if self.current_file is not None:
             self.current_file.flush()
             self.current_file.close()
-            dump_obj({'max_size': self.max_file_size, 'size': self.current_file_size,
-                      'example': self.example_episode, 'reward_indices': self.reward_indices},
-                     self.current_file.file_name + '.meta')
+            self.dump_meta()
             self.current_file = None
             self.on_file_completed_callback()
             # notify controller here
@@ -129,6 +133,8 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
         if self.current_file is not None:
             if self.current_file_size == self.max_file_size:
                 self.reset_file()
+            elif self.current_file_size % self.meta_save_frequency == 0:
+                self.dump_meta()
             self.reward_indices[int(episode.reward)].append(self.current_file_size)
             self.current_file.set(episode, self.current_file_size)
             self.current_file_size += 1
@@ -248,12 +254,16 @@ class LearningAgent:
 
     def read_episode_files(self, version: Union[int, List[int]]) -> \
             Tuple[List[EpisodeFile], List[int], List[Dict[np.ndarray, List[int]]], Episode]:
-        example_episode = None
+        if not isinstance(version, list):
+            version = [version]
 
+        example_episode = None
         episode_files = []
         file_sizes = []
         file_reward_indices_list = []
-        meta_files = glob.glob(f'{self.file_dir}/{version}/*.meta')
+        meta_files = []
+        for v in version:
+            meta_files += glob.glob(f'{self.file_dir}/{v}/*.meta')
         for meta_file in meta_files:
             meta = load_obj(meta_file)
             example_episode = meta['example'] if example_episode is None else \
@@ -739,6 +749,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.dir = cfg['dir']
+        self.environment = None
 
         self.action_for_screen = action_for_screen
         self.to_preprocessed_coord = to_preprocessed_coord
@@ -766,6 +777,9 @@ class CollectorLogger(EnvironmentCallbacks):
                                  'Predictions Std'), True)(tf.math.reduce_std(reward_predictor.output[0]))
         ]
 
+    def set_environment(self, environment: RelevantActionEnvironment):
+        self.environment = environment
+
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
 
@@ -787,7 +801,7 @@ class CollectorLogger(EnvironmentCallbacks):
         if self.local_step % self.image_log_frequency == 0:
             # assert self.action is None
             self.action = action
-            self.log_screen('Screen', src_state, lambda x: x)
+            self.log_screen('Screen', src_state, lambda x: x, self.environment.animation_mask)
             self.log_screen('Preprocessed Screen', (self.preprocessed_screen * 255).astype(np.uint8),
                             self.to_preprocessed_coord)
             self.log_predictions(self.prediction, self.clustering)
@@ -806,12 +820,14 @@ class CollectorLogger(EnvironmentCallbacks):
         # assert self.preprocessed_screen is None
         self.preprocessed_screen = screen
 
-    def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable) -> None:
+    def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable, mask: bool = None) -> None:
         if self.action[-1] != 0:
             raise NotImplementedError('Only one type of action is supported for now.')
         screen = screen.copy()
         if screen.shape[-1] == 1:
             screen = np.concatenate([screen] * 3, axis=-1)
+        if mask is not None:
+            screen[mask == 0] = [100, 255, 0]
         action_p = point_transformer(self.action_for_screen(self.action[:2])).astype(np.int32)
         screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
 
@@ -1080,6 +1096,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
         env = RelevantActionEnvironment(collector, phone_type(f'device{id}', 5554 + 2 * id, phone_configs),
                                         action2pos, environment_configs)
         env.add_callback(logger)
+        logger.set_environment(env)
         return env
 
     if is_learner:
