@@ -165,8 +165,8 @@ class RelevantActionEnvironment(Environment):
         screenshot_count = 1
         changed_screenshot_num = 0
 
-        self.changed_from_last = not self.are_states_equal(last_state, change_state, self.animation_mask)
-        if self.changed_from_last:
+        animation_based_changed_from_last = not self.are_states_equal(last_state, change_state, self.animation_mask)
+        if animation_based_changed_from_last:
             changed_screenshot_num = screenshot_count
 
         tmp_time = tm.time()
@@ -179,19 +179,22 @@ class RelevantActionEnvironment(Environment):
             if not self.are_states_equal(tmp_state, change_state, self.animation_mask):
                 change_time = tmp_time
                 change_state = tmp_state
-                if not self.changed_from_last:
+                if not animation_based_changed_from_last:
                     changed_screenshot_num = screenshot_count
-                self.changed_from_last = True
+                animation_based_changed_from_last = True
             if tmp_time - action_time >= self.action_offset_wait_time and \
                     tmp_time - change_time >= self.action_freeze_wait_time:
                 break
             tmp_time = tm.time()
 
-        print(f'{datetime.now()}: took {screenshot_count} screenshots in {self.phone.device_name} '
-              f'to compute reward.'
-              f' Screen {f"changed at {changed_screenshot_num}" if self.changed_from_last else "did not change"}.')
+        self.changed_from_last = not self.are_states_equal(last_state, self.read_state(), None)
+        print(f'{datetime.now()}: change from last in {self.phone.device_name}: {self.changed_from_last}')
 
-        if self.changed_from_last:
+        print(f'{datetime.now()}: took {screenshot_count} screenshots in {self.phone.device_name} '
+              f'to compute reward. Screen '
+              f'{f"changed at {changed_screenshot_num}" if animation_based_changed_from_last else "did not change"}.')
+
+        if animation_based_changed_from_last:
             reward = self.pos_reward
         else:
             reward = self.neg_reward

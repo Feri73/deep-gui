@@ -356,11 +356,10 @@ class LearningAgent:
         else:
             print(f'{datetime.now()}: starting learning for experience version {version}')
             data = generator()
-            checkpoint_callback = keras.callbacks.ModelCheckpoint(f'{self.save_dir}/{version}', monitor='loss',
-                                                                  save_best_only=False, save_weights_only=True,
-                                                                  save_freq=int(self.save_frequency *
-                                                                                (data_size // self.batch_size) *
-                                                                                self.batch_size))
+            checkpoint_callback = keras.callbacks.ModelCheckpoint(
+                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}',
+                monitor='loss', save_best_only=False, save_weights_only=True,
+                save_freq=int(self.save_frequency * (data_size // self.batch_size) * self.batch_size))
             self.model.fit(data, epochs=self.epochs_per_version, steps_per_epoch=data_size // self.batch_size,
                            callbacks=[checkpoint_callback])
             del data
@@ -398,6 +397,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
                  tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
         self.pre_training = cfg['pre_training']
+        self.collect_before_pre_training = cfg['collect_before_pre_training']
 
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
@@ -428,7 +428,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
         collector.environment.add_callback(self)
         self.get_thread_locals().collector = collector
         self.get_thread_locals().thread = thread
-        self.get_thread_locals().pop_and_run_next(self)
+        self.get_thread_locals().pop_and_run_next(self, wait=not self.collect_before_pre_training)
         collector.start()
 
     def on_episode_end(self, premature: bool) -> None:
@@ -748,6 +748,7 @@ class CollectorLogger(EnvironmentCallbacks):
                  action_for_screen: Callable, to_preprocessed_coord: Callable, cfg: Config):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
+        self.prediction_overlay_factor = cfg['prediction_overlay_factor']
         self.dir = cfg['dir']
         self.environment = None
 
@@ -802,8 +803,7 @@ class CollectorLogger(EnvironmentCallbacks):
             # assert self.action is None
             self.action = action
             self.log_screen('Screen', src_state, lambda x: x, self.environment.animation_mask)
-            self.log_screen('Preprocessed Screen', (self.preprocessed_screen * 255).astype(np.uint8),
-                            self.to_preprocessed_coord)
+            self.log_screen('Preprocessed Screen', self.preprocessed_screen, self.to_preprocessed_coord)
             self.log_predictions(self.prediction, self.clustering)
         for name in self.scalars:
             self.log_scalar(name, self.scalars[name])
@@ -818,7 +818,7 @@ class CollectorLogger(EnvironmentCallbacks):
 
     def on_new_preprocessed_screen(self, screen: np.ndarray) -> None:
         # assert self.preprocessed_screen is None
-        self.preprocessed_screen = screen
+        self.preprocessed_screen = (screen * 255).astype(np.uint8)
 
     def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable, mask: bool = None) -> None:
         if self.action[-1] != 0:
@@ -837,14 +837,16 @@ class CollectorLogger(EnvironmentCallbacks):
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
         pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
-        if clustering is not None:
+        if clustering is not None or self.prediction_overlay_factor > 0:
             prev_size = pred.shape[:2]
             new_size = self.preprocessed_screen.shape[:2]
             pred = Image.fromarray(np.uint8(pred))
             pred = pred.resize(new_size)
-            draw = ImageDraw.Draw(pred)
-            for cluster in zip(*clustering):
-                draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
+            pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
+            if clustering is not None:
+                draw = ImageDraw.Draw(pred)
+                for cluster in zip(*clustering):
+                    draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
             pred = np.array(pred)
         self.log_image('Predictions', pred)
 
@@ -1080,10 +1082,10 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
         output = keras.layers.Lambda(control_dependencies)((output, logger.get_dependencies()))
 
     model = keras.Model(inputs=input, outputs=output)
-    if weights_file is not None:
-        model.load_weights(weights_file)
 
     if is_learner:
+        if weights_file is not None:
+            model.load_weights(weights_file)
         model.compile(optimizer, keras.losses.BinaryCrossentropy())
 
     phone_type = DummyPhone if dummy_mode else Phone
