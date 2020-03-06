@@ -1095,7 +1095,8 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
         return pos[1], pos[0], action[2]
 
     def create_environment(collector: DataCollectionAgent) -> Environment:
-        env = RelevantActionEnvironment(collector, phone_type(f'device{id}', 5554 + 2 * id, phone_configs),
+        env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
+                                                              5554 + 2 * id, phone_configs),
                                         action2pos, environment_configs)
         env.add_callback(logger)
         logger.set_environment(env)
