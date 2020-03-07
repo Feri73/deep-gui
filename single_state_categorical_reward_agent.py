@@ -785,8 +785,8 @@ class CollectorLogger(EnvironmentCallbacks):
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
 
-    def on_new_clustering(self, clickables: tf.Tensor, clusters: np.ndarray) -> None:
-        self.clustering = (clickables.numpy(), clusters)
+    def on_new_clustering(self, clickables: tf.Tensor, clusters: np.ndarray, valid_clusters_nums: np.ndarray) -> None:
+        self.clustering = (clickables.numpy(), clusters, valid_clusters_nums)
 
     def on_new_prediction(self, prediction: np.ndarray) -> None:
         self.prediction = prediction
@@ -837,7 +837,7 @@ class CollectorLogger(EnvironmentCallbacks):
 
         self.log_image(name, screen)
 
-    def log_predictions(self, pred: np.ndarray, clustering: Tuple[np.ndarray, np.ndarray]) -> None:
+    def log_predictions(self, pred: np.ndarray, clustering: Tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
         pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
@@ -849,8 +849,9 @@ class CollectorLogger(EnvironmentCallbacks):
             pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
             if clustering is not None:
                 draw = ImageDraw.Draw(pred)
-                for cluster in zip(*clustering):
-                    draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
+                for cluster in zip(*clustering[:2]):
+                    if cluster[1] in clustering[2]:
+                        draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
             pred = np.array(pred)
         self.log_image('Predictions', pred)
 
@@ -941,7 +942,7 @@ class PredictionClusterer:
                                                 compute_full_tree=True, linkage='single')
             clusters = clusterer.fit_predict(clickables)
             clusters_nums, clusters_counts = np.unique(clusters, axis=0, return_counts=True)
-            valid_clusters_nums = clusters_nums[clusters_counts > self.cluster_count_threshold]
+            valid_clusters_nums = clusters_nums[clusters_counts >= self.cluster_count_threshold]
             if len(valid_clusters_nums) == 0:
                 return random_reward_to_action(preds_old)
             chosen_cluster = np.random.choice(valid_clusters_nums, 1)
@@ -950,7 +951,7 @@ class PredictionClusterer:
                 tf.nn.softmax(tf.gather_nd(preds, chosen_clickables)))
             chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
             for callback in self.callbacks:
-                callback(clickables, clusters)
+                callback(clickables, clusters, valid_clusters_nums)
         return tf.expand_dims(chosen_clickable, axis=0)
 
 
