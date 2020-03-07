@@ -757,6 +757,7 @@ class CollectorLogger(EnvironmentCallbacks):
 
         self.local_step = 0
         self.rewards = []
+        self.activity_count = []
         self.action = None
         self.preprocessed_screen = None
         self.prediction = None
@@ -772,10 +773,10 @@ class CollectorLogger(EnvironmentCallbacks):
             BufferLogger(self.image_log_frequency, self.on_new_prediction, False)(reward_predictor.output[0]),
             BufferLogger(self.scalar_log_frequency,
                          partial(self.on_new_scalar,
-                                 'Predictions Mean'), True)(tf.reduce_mean(reward_predictor.output[0])),
+                                 'Predictions/Mean'), True)(tf.reduce_mean(reward_predictor.output[0])),
             BufferLogger(self.scalar_log_frequency,
                          partial(self.on_new_scalar,
-                                 'Predictions Std'), True)(tf.math.reduce_std(reward_predictor.output[0]))
+                                 'Predictions/Std'), True)(tf.math.reduce_std(reward_predictor.output[0]))
         ]
 
     def set_environment(self, environment: RelevantActionEnvironment):
@@ -796,14 +797,17 @@ class CollectorLogger(EnvironmentCallbacks):
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
         self.rewards.append(np.array(reward))
+        self.activity_count.append(np.array(len(self.environment.phone.visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
-            self.log_scalar('Reward', self.rewards)
+            self.log_scalar('Metrics/Reward', self.rewards)
+            self.log_scalar('Metrics/Activity Count', self.activity_count)
             self.rewards = []
+            self.activity_count = []
         if self.local_step % self.image_log_frequency == 0:
             # assert self.action is None
             self.action = action
-            self.log_screen('Screen', src_state, lambda x: x, self.environment.animation_mask)
-            self.log_screen('Preprocessed Screen', self.preprocessed_screen, self.to_preprocessed_coord)
+            self.log_screen('Screen/Original', src_state, lambda x: x, self.environment.animation_mask)
+            self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
             self.log_predictions(self.prediction, self.clustering)
         for name in self.scalars:
             self.log_scalar(name, self.scalars[name])
@@ -911,9 +915,10 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 
 
 class PredictionClusterer:
-    def __init__(self, clickable_threshold: float, distance_threshold: float):
-        self.clickable_threshold = clickable_threshold
-        self.distance_threshold = distance_threshold
+    def __init__(self, cfg: Config):
+        self.clickable_threshold = cfg['clickable_threshold']
+        self.distance_threshold = cfg['distance_threshold']
+        self.cluster_count_threshold = cfg['cluster_count_threshold']
 
         self.callbacks = []
 
@@ -935,7 +940,11 @@ class PredictionClusterer:
             clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=self.distance_threshold,
                                                 compute_full_tree=True, linkage='single')
             clusters = clusterer.fit_predict(clickables)
-            chosen_cluster = np.random.randint(0, clusterer.n_clusters_)
+            clusters_nums, clusters_counts = np.unique(clusters, axis=0, return_counts=True)
+            valid_clusters_nums = clusters_nums[clusters_counts > self.cluster_count_threshold]
+            if len(valid_clusters_nums) == 0:
+                return random_reward_to_action(preds_old)
+            chosen_cluster = np.random.choice(valid_clusters_nums, 1)
             chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster)
             chosen_clickable_i = most_probable_weighted_policy_user(
                 tf.nn.softmax(tf.gather_nd(preds, chosen_clickables)))
@@ -1023,13 +1032,11 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
     environment_configs['steps_per_episode'] = 1
-    environment_configs['shuffle'] = True
     environment_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     environment_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
-    phone_configs['maintain_visited_activities'] = False
     collector_configs['file_dir'] = data_file_dir
     if is_tester:
         collector_configs['max_file_size'] = 0
@@ -1125,14 +1132,13 @@ collectors = cfg['collectors']
 testers = cfg['testers']
 reset_logs = cfg['reset_logs']
 coordinator_configs = cfg['coordinator_configs']
+clusterer_configs = cfg['clusterer_configs']
 logs_dir = cfg['logs_dir']
-cluster_clickable_threshold = cfg['clustering_clickable_threshold']
-cluster_distance_threshold = cfg['cluster_distance_threshold']
 collector_version_start = cfg['collector_configs']['version_start']
 
 coordinator_configs['collector_version_start'] = collector_version_start
 
-prediction_to_action_options = [lambda: PredictionClusterer(cluster_clickable_threshold, cluster_distance_threshold),
+prediction_to_action_options = [lambda: PredictionClusterer(clusterer_configs),
                                 better_reward_to_action, worse_reward_to_action, most_certain_reward_to_action,
                                 least_certain_reward_to_action, random_reward_to_action]
 collector_option_probs = parse_specs_to_probs(collectors, len(prediction_to_action_options))

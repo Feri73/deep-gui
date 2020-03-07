@@ -35,7 +35,7 @@ class RelevantActionEnvironment(Environment):
         self.action_offset_wait_time = cfg['action_offset_wait_time']
         self.action_freeze_wait_time = cfg['action_freeze_wait_time']
         self.screenshots_interval = cfg['screenshots_interval']
-        shuffle = cfg['shuffle']
+        shuffle_apps = cfg['shuffle_apps']
         assert self.steps_per_app % self.steps_per_episode == 0
 
         self.step = 0
@@ -50,7 +50,7 @@ class RelevantActionEnvironment(Environment):
 
         self.phone.start_phone()
 
-        if shuffle:
+        if shuffle_apps:
             # better way for doing this
             np.random.shuffle(self.phone.app_names)
 
