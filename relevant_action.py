@@ -57,10 +57,11 @@ class RelevantActionEnvironment(Environment):
             np.random.shuffle(tmp)
             self.phone.app_names, self.phone.apk_names = zip(*tmp)
 
-    def get_current_app(self, apk: bool = False) -> str:
+    def get_current_app(self, apk: bool = False, step: int = None) -> str:
+        step = self.step if step is None else step
         if apk:
-            return self.phone.apk_names[(self.step // self.steps_per_app) % len(self.phone.apk_names)]
-        return self.phone.app_names[(self.step // self.steps_per_app) % len(self.phone.app_names)]
+            return self.phone.apk_names[(step // self.steps_per_app) % len(self.phone.apk_names)]
+        return self.phone.app_names[(step // self.steps_per_app) % len(self.phone.app_names)]
 
     def start(self):
         while True:
@@ -75,9 +76,8 @@ class RelevantActionEnvironment(Environment):
     def restart(self) -> None:
         self.finished = False
         if self.step % self.steps_per_app == 0:
-            self.step = 0
             try:
-                self.phone.close_app(self.get_current_app())
+                self.phone.close_app(self.get_current_app(step=self.step - 1))
             except Exception:
                 pass
             # if self.cur_app_index == 0:
