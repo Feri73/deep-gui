@@ -118,16 +118,19 @@ class Phone:
                              (f' -no-cache' if fresh else ''))
         self.wait_for_start()
 
+    def install_apk(self, apk_name: str) -> None:
+        self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
+
     def initial_setups(self) -> None:
         # now that I've updated adb see if i can use this again
         # apks = ' '.join(self.apk_names)
         # self.adb(f'install-multi-package --instant "{apks}"')
 
         if self.install_apks:
-            for apk_name, app_name in [_ for _ in zip(self.apk_names, self.app_names)]:
+            for apk_name, app_name in list(zip(self.apk_names, self.app_names)):
                 try:
                     print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
-                    self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
+                    self.install_apk(apk_name)
                 except Exception:
                     print(f'{datetime.now()}: couldn\'t install {apk_name}. removing it')
                     self.apk_names.remove(apk_name)
@@ -230,6 +233,9 @@ class DummyPhone:
         pass
 
     def start_phone(self, fresh: bool = False) -> None:
+        pass
+
+    def install_apk(self, apk_name: str) -> None:
         pass
 
     def close_app(self, app_name: str) -> None:

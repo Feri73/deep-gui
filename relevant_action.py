@@ -35,6 +35,7 @@ class RelevantActionEnvironment(Environment):
         self.action_offset_wait_time = cfg['action_offset_wait_time']
         self.action_freeze_wait_time = cfg['action_freeze_wait_time']
         self.screenshots_interval = cfg['screenshots_interval']
+        self.remove_bad_apps = cfg['remove_bad_apps']
         shuffle_apps = cfg['shuffle_apps']
         assert self.steps_per_app % self.steps_per_episode == 0
 
@@ -52,7 +53,9 @@ class RelevantActionEnvironment(Environment):
 
         if shuffle_apps:
             # better way for doing this
-            np.random.shuffle(self.phone.app_names)
+            tmp = list(zip(self.phone.app_names, self.phone.apk_names))
+            np.random.shuffle(tmp)
+            self.phone.app_names, self.phone.apk_names = zip(*tmp)
 
     def start(self):
         while True:
@@ -206,10 +209,15 @@ class RelevantActionEnvironment(Environment):
         self.step -= 1
 
         if self.just_restarted:
-            print(f'{datetime.now()}: seems like {self.phone.app_names[self.cur_app_index]} causes trouble. '
-                  f'removing it from phone #{self.phone.device_name}')
-            self.phone.app_names.remove(self.phone.app_names[self.cur_app_index])
-            self.cur_app_index = self.cur_app_index % len(self.phone.app_names)
+            print(f'{datetime.now()}: seems like {self.phone.app_names[self.cur_app_index]} causes trouble. ', end='')
+            if self.remove_bad_apps:
+                print(f'removing it from phone #{self.phone.device_name}')
+                self.phone.app_names.remove(self.phone.app_names[self.cur_app_index])
+                self.phone.apk_names.remove(self.phone.apk_names[self.cur_app_index])
+                self.cur_app_index = self.cur_app_index % len(self.phone.app_names)
+            else:
+                print(f'reinstalling it to phone #{self.phone.device_name}')
+                self.phone.install_apk(self.phone.apk_names[self.cur_app_index])
         else:
             try:
                 if self.phone.is_booted():
