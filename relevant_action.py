@@ -6,7 +6,7 @@ from typing import Tuple, Callable, Any, Optional
 
 import numpy as np
 
-from environment import Environment, EnvironmentController
+from environment import Environment, EnvironmentController, EnvironmentCallbacks
 from phone import Phone
 from utils import Config
 
@@ -47,6 +47,7 @@ class RelevantActionEnvironment(Environment):
         self.in_blank_screen = False
         self.animation_mask = None
         self.changed_from_last = True
+        self.step_changed = False
 
         self.phone.start_phone()
 
@@ -156,6 +157,7 @@ class RelevantActionEnvironment(Environment):
         action = self.action2pos(action)
 
         self.step += 1
+        self.step_changed = True
         if self.step % self.steps_per_episode == 0:
             self.finished = True
 
@@ -209,7 +211,9 @@ class RelevantActionEnvironment(Environment):
 
     def on_error(self):
         super().on_error()
-        self.step -= 1
+        if self.step_changed:
+            self.step -= 1
+            self.step_changed = False
 
         if self.just_restarted:
             print(f'{datetime.now()}: seems like {self.get_current_app()} causes trouble. ', end='')
@@ -237,3 +241,7 @@ class RelevantActionEnvironment(Environment):
             self.just_restarted = not self.just_restarted
         self.has_state_changed = True
         self.changed_from_last = True
+
+    def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
+        self.step_changed = False
+        super(RelevantActionEnvironment, self).on_state_change(src_state, action, dst_state, reward)
