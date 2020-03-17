@@ -40,7 +40,6 @@ class RelevantActionEnvironment(Environment):
         assert self.steps_per_app % self.steps_per_episode == 0
 
         self.step = 0
-        self.cur_app_index = -1
         self.finished = False
         self.current_state = None
         self.has_state_changed = True
@@ -57,6 +56,11 @@ class RelevantActionEnvironment(Environment):
             np.random.shuffle(tmp)
             self.phone.app_names, self.phone.apk_names = zip(*tmp)
 
+    def get_current_app(self, apk: bool = False) -> str:
+        if apk:
+            return self.phone.apk_names[(self.step // self.steps_per_app) % len(self.phone.apk_names)]
+        return self.phone.app_names[(self.step // self.steps_per_app) % len(self.phone.app_names)]
+
     def start(self):
         while True:
             try:
@@ -72,13 +76,12 @@ class RelevantActionEnvironment(Environment):
         if self.step % self.steps_per_app == 0:
             self.step = 0
             try:
-                self.phone.close_app(self.phone.app_names[self.cur_app_index])
+                self.phone.close_app(self.get_current_app())
             except Exception:
                 pass
-            self.cur_app_index = (self.cur_app_index + 1) % len(self.phone.app_names)
             # if self.cur_app_index == 0:
             #     self.phone.load_snapshot('fresh')
-            self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            self.phone.open_app(self.get_current_app())
             self.has_state_changed = True
             self.changed_from_last = True
 
@@ -114,7 +117,7 @@ class RelevantActionEnvironment(Environment):
         trials = self.in_app_check_trials
         while trials > 0:
             if self.step % self.steps_per_in_app_check != 0 or \
-                    self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+                    self.phone.is_in_app(self.get_current_app(), self.force_app_on_top):
                 res = self.phone.send_event(*action)
                 self.has_state_changed = True
                 self.just_restarted = False
@@ -209,29 +212,28 @@ class RelevantActionEnvironment(Environment):
         self.step -= 1
 
         if self.just_restarted:
-            print(f'{datetime.now()}: seems like {self.phone.app_names[self.cur_app_index]} causes trouble. ', end='')
+            print(f'{datetime.now()}: seems like {self.get_current_app()} causes trouble. ', end='')
             if self.remove_bad_apps:
                 print(f'removing it from phone #{self.phone.device_name}')
-                self.phone.app_names.remove(self.phone.app_names[self.cur_app_index])
-                self.phone.apk_names.remove(self.phone.apk_names[self.cur_app_index])
-                self.cur_app_index = self.cur_app_index % len(self.phone.app_names)
+                self.phone.app_names.remove(self.get_current_app())
+                self.phone.apk_names.remove(self.get_current_app(apk=True))
             else:
                 print(f'reinstalling it to phone #{self.phone.device_name}')
-                self.phone.install_apk(self.phone.apk_names[self.cur_app_index])
+                self.phone.install_apk(self.get_current_app(apk=True))
         else:
             try:
                 if self.phone.is_booted():
-                    self.phone.open_app(self.phone.app_names[self.cur_app_index])
+                    self.phone.open_app(self.get_current_app())
             except Exception:
                 pass
         if self.just_restarted or self.in_blank_screen or \
-                not self.phone.is_in_app(self.phone.app_names[self.cur_app_index], self.force_app_on_top):
+                not self.phone.is_in_app(self.get_current_app(), self.force_app_on_top):
             self.in_blank_screen = False
             try:
                 self.phone.restart()
             except Exception:
                 self.phone.start_phone(True)
-            self.phone.open_app(self.phone.app_names[self.cur_app_index])
+            self.phone.open_app(self.get_current_app())
             self.just_restarted = not self.just_restarted
         self.has_state_changed = True
         self.changed_from_last = True
