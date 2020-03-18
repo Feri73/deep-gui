@@ -47,7 +47,6 @@ class RelevantActionEnvironment(Environment):
         self.in_blank_screen = False
         self.animation_mask = None
         self.changed_from_last = True
-        self.step_changed = False
 
         self.phone.start_phone()
 
@@ -156,11 +155,6 @@ class RelevantActionEnvironment(Environment):
     def act(self, action: np.ndarray, wait_action: Callable[[], Any]) -> float:
         action = self.action2pos(action)
 
-        self.step += 1
-        self.step_changed = True
-        if self.step % self.steps_per_episode == 0:
-            self.finished = True
-
         if self.changed_from_last:
             self.animation_mask = self.get_animation_mask(wait_action)
         else:
@@ -211,9 +205,6 @@ class RelevantActionEnvironment(Environment):
 
     def on_error(self):
         super().on_error()
-        if self.step_changed:
-            self.step -= 1
-            self.step_changed = False
 
         if self.just_restarted:
             print(f'{datetime.now()}: seems like {self.get_current_app()} causes trouble. ', end='')
@@ -243,5 +234,7 @@ class RelevantActionEnvironment(Environment):
         self.changed_from_last = True
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
-        self.step_changed = False
+        self.step += 1
+        if self.step % self.steps_per_episode == 0:
+            self.finished = True
         super(RelevantActionEnvironment, self).on_state_change(src_state, action, dst_state, reward)
