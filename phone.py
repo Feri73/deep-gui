@@ -22,6 +22,7 @@ class Phone:
         self.adb_path = cfg['adb_path']
         self.app_start_wait_time = cfg['app_start_wait_time']
         self.app_exit_wait_time = cfg['app_exit_wait_time']
+        self.phone_boot_wait_time = cfg['phone_boot_wait_time']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
         # self.screenshot_trials = cfg['screenshot_trials']
         self.avd_path = cfg['avd_path']
@@ -87,6 +88,7 @@ class Phone:
         self.adb('wait-for-device')
         while not self.is_booted():
             time.sleep(2)
+        time.sleep(self.phone_boot_wait_time)
 
     def restart(self):
         print(f'{datetime.now()}: restarting {self.device_name}')

@@ -55,6 +55,8 @@ class RelevantActionEnvironment(Environment):
             tmp = list(zip(self.phone.app_names, self.phone.apk_names))
             np.random.shuffle(tmp)
             self.phone.app_names, self.phone.apk_names = zip(*tmp)
+            self.phone.app_names = list(self.phone.app_names)
+            self.phone.apk_names = list(self.phone.apk_names)
 
     def get_current_app(self, apk: bool = False, step: int = None) -> str:
         step = self.step if step is None else step
