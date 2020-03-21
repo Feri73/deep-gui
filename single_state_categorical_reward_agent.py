@@ -396,6 +396,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
                  learner_creator: Callable[[], LearningAgent],
                  tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
+        self.train = cfg['train']
         self.pre_training = cfg['pre_training']
         self.collect_before_pre_training = cfg['collect_before_pre_training']
 
@@ -455,7 +456,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
     def record_collector_file_completion(self, version: int) -> None:
         self.file_completions[version].append(True)
-        if len(self.file_completions[version]) == len(self.collector_creators):
+        if self.train and len(self.file_completions[version]) == len(self.collector_creators):
             self.learner.learn(version)
             self.sync_weights()
 
