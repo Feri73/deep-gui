@@ -28,6 +28,7 @@ class Phone:
         self.avd_path = cfg['avd_path']
         apks_path = cfg['apks_path']
         self.aapt_path = cfg['aapt_path']
+        self.clone_script_path = cfg['clone_script_path']
         self.install_apks = cfg['install_apks']
         self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.app_activity_dict = {}
@@ -51,8 +52,9 @@ class Phone:
 
     def maintain_current_activity(self):
         try:
-            tmp = self.adb('shell "dumpsys activity recents | grep intent"').strip()
-            match = re.match('.*cmp=(.+)}', tmp)
+            tmp = self.adb('shell "dumpsys activity activities | grep mResumedActivity"').strip()
+            match = re.match('ActivityRecord{.+ .+ (.+) .+}', tmp)
+            print(f'{datetime.now()}: activity {match[1]} is visited in {self.device_name}')
             self.visited_activities.add(match[1])
         except Exception as ex:
             print(f'{datetime.now()}: exception happened while maintaining current activity -> {ex}')
@@ -90,13 +92,15 @@ class Phone:
             time.sleep(2)
         time.sleep(self.phone_boot_wait_time)
 
-    def restart(self):
+    def restart(self, recreate_phone: bool = False):
         print(f'{datetime.now()}: restarting {self.device_name}')
         self.adb('emu kill')
         # this is not a good way of checking if the phone is off. because the phone may be already starting,
         #    not completely booted tho. this means that i try to start the phone twice.
         while self.is_booted():
             time.sleep(1)
+        if recreate_phone:
+            self.recreate_emulator()
         self.start_phone(True)
 
     def start_phone(self, fresh: bool = False) -> None:
@@ -114,8 +118,19 @@ class Phone:
             self.save_snapshot('fresh')
             # copy_tree(local_snapshot_path, ref_snapshot_path)
 
+    def recreate_emulator(self) -> None:
+        print(f'{datetime.now()}: recreating emulator for {self.device_name}')
+        while True:
+            try:
+                os.remove(f'{self.avd_path}/{self.device_name}.ini')
+                os.rmdir(f'{self.avd_path}/{self.device_name}.avd/')
+                break
+            except:
+                pass
+        os.system(f'{self.clone_script_path} {self.device_name}')
+
     def start_emulator(self, fresh: bool = False) -> None:
-        print(f'{datetime.now()}: starting emulator {self.device_name}')
+        print(f'{datetime.now()}: starting emulator {self.device_name}. fresh={fresh}')
         run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' +
                              (f' -no-cache' if fresh else ''))
         self.wait_for_start()
@@ -169,6 +184,7 @@ class Phone:
         # self.adb(f'shell su root pm clear {app_name}')
         self.adb(f'shell am force-stop {app_name}')
         time.sleep(self.app_exit_wait_time)
+        self.visited_activities = set()
 
     def add_app_activity(self, app_name: str) -> None:
         dat = self.adb(f'shell dumpsys package {app_name} | grep -A1 "android.intent.action.MAIN:"')
@@ -187,8 +203,8 @@ class Phone:
         else:
             time.sleep(self.app_start_wait_time)
 
-    def screenshot(self) -> np.ndarray:
-        if self.maintain_visited_activities:
+    def screenshot(self, perform_checks: bool = False) -> np.ndarray:
+        if self.maintain_visited_activities and perform_checks:
             self.maintain_current_activity()
         self.step += 1
         screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
@@ -231,7 +247,7 @@ class DummyPhone:
         self.screen = None
         self.background = None
 
-    def restart(self) -> None:
+    def restart(self, recreate_phone: bool = False) -> None:
         pass
 
     def start_phone(self, fresh: bool = False) -> None:
@@ -250,7 +266,7 @@ class DummyPhone:
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
 
-    def screenshot(self) -> np.ndarray:
+    def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.screen is None:
             self.screen = np.minimum(1.0, np.maximum(0.0, np.random.normal(self.background, self.background_color_var,
                                                                            (*self.screen_shape, 3))))

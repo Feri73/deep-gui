@@ -239,19 +239,6 @@ class LearningAgent:
         augmented_size = abs(np.subtract(*[len(total_reward_indices[reward]) for reward in total_reward_indices]))
         return less_represented_reward, augmented_size
 
-    @staticmethod
-    def index_to_bucket_i_list(bucket_sizes: List[int]) -> List[Tuple[int, int]]:
-        total_size = sum(bucket_sizes)
-        total_cum_size = np.cumsum(bucket_sizes)
-        index_to_bucket_i = []
-        current_file_i = 0
-        for pos in range(total_size):
-            if pos >= total_cum_size[current_file_i]:
-                current_file_i += 1
-            index_to_bucket_i.append((current_file_i, pos - (total_cum_size[current_file_i]
-                                                             if current_file_i > 0 else 0)))
-        return index_to_bucket_i
-
     def read_episode_files(self, version: Union[int, List[int]]) -> \
             Tuple[List[EpisodeFile], List[int], List[Dict[np.ndarray, List[int]]], Episode]:
         if not isinstance(version, list):
@@ -290,20 +277,25 @@ class LearningAgent:
         if augmented_size == -1:
             return None, 0
 
-        position_to_file_i = self.index_to_bucket_i_list(file_sizes)
-
         total_size = sum(file_sizes)
         if self.augmenting_correction:
             training_size = total_size + augmented_size
+            poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                      (total_size - augmented_size) // 2, replace=False)
+            poses1_augment = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                              augmented_size, replace=False)
+            poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
+                                      (total_size - augmented_size) // 2, replace=False)
+            positions = np.concatenate([poses1, poses1_augment, poses2])
         else:
-            training_size = total_size
-        positions = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
-        if not self.augmenting_correction:
             training_size = total_size - augmented_size
-            if augmented_size > 0:
-                positions = [p for p in positions if position_to_file_i[p] not in
-                             np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
-                                              augmented_size, replace=False).tolist()]
+            poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                      training_size // 2, replace=False)
+            poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
+                                      training_size // 2, replace=False)
+            positions = np.concatenate([poses1, poses2])
+        positions_order = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
+        positions = positions[positions_order]
 
         def generator() -> Tuple[Dict[str, np.ndarray], np.ndarray]:
             # if epochs is a lot more than 1, then i should generate a dataset in file instead of this ad hoc method
@@ -315,11 +307,6 @@ class LearningAgent:
                         current_positions_i = 0
                         batch_size = self.batch_size
 
-                    if current_positions_i == 0 and augmented_size > 0 and self.augmenting_correction:
-                        augmented_data_indices = np.random.choice(
-                            np.arange(len(total_reward_indices[less_represented_reward])), augmented_size)
-                        augmented_data = np.array(total_reward_indices[less_represented_reward])[augmented_data_indices]
-
                     x = {'state': np.zeros((batch_size, *example_episode.state.shape),
                                            dtype=example_episode.state.dtype),
                          'action': np.zeros((batch_size, *example_episode.action.shape),
@@ -329,12 +316,8 @@ class LearningAgent:
                     y = np.zeros((batch_size, 1), dtype=np.int32)
                     for i in range(batch_size):
                         position = positions[current_positions_i + i]
-                        if position < total_size:
-                            file_i = position_to_file_i[position][0]
-                            data_i = position_to_file_i[position][1]
-                        else:
-                            file_i = augmented_data[position - total_size][0]
-                            data_i = augmented_data[position - total_size][1]
+                        file_i = position[0]
+                        data_i = position[1]
                         episode = episode_files[file_i].get(data_i)
                         episode = self.distorter(episode)
                         x['state'][i] = episode.state
@@ -946,8 +929,8 @@ class PredictionClusterer:
             valid_clusters_nums = clusters_nums[clusters_counts >= self.cluster_count_threshold]
             if len(valid_clusters_nums) == 0:
                 return random_reward_to_action(preds_old)
-            chosen_cluster = np.random.choice(valid_clusters_nums, 1)
-            chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster)
+            chosen_cluster_num = np.random.choice(valid_clusters_nums, 1)
+            chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster_num)
             chosen_clickable_i = most_probable_weighted_policy_user(
                 tf.nn.softmax(tf.gather_nd(preds, chosen_clickables)))
             chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
@@ -1019,6 +1002,8 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     weights_file = cfg['weights_file']
     collectors_apks_path = cfg['collectors_apks_path']
     testers_apks_path = cfg['testers_apks_path']
+    collectors_clone_script = cfg['collectors_clone_script']
+    testers_clone_script = cfg['testers_clone_script']
     distort_color_probability = cfg['distort_color_probability']
     use_unet = cfg['use_unet']
     screen_parser_configs = cfg[f'{"unet" if use_unet else ""}_screen_parser_configs']
@@ -1039,6 +1024,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
+    phone_configs['clone_script_path'] = testers_clone_script if is_tester else collectors_clone_script
     collector_configs['file_dir'] = data_file_dir
     if is_tester:
         collector_configs['max_file_size'] = 0

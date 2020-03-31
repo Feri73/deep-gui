@@ -6,7 +6,7 @@ from typing import Tuple, Callable, Any, Optional
 
 import numpy as np
 
-from environment import Environment, EnvironmentController, EnvironmentCallbacks
+from environment import Environment, EnvironmentController
 from phone import Phone
 from utils import Config
 
@@ -90,12 +90,13 @@ class RelevantActionEnvironment(Environment):
     def is_finished(self) -> bool:
         return self.finished
 
-    def read_state(self) -> np.ndarray:
+    def read_state(self, perform_checks: bool = True) -> np.ndarray:
         if self.has_state_changed:
             trials = self.black_screen_trials
             while trials > 0:
-                self.current_state = self.phone.screenshot()
-                if self.are_states_equal(np.zeros_like(self.current_state), self.current_state, None):
+                self.current_state = self.phone.screenshot(perform_checks)
+                if perform_checks and \
+                        self.are_states_equal(np.zeros_like(self.current_state), self.current_state, None):
                     trials -= 1
                     if trials > 0:
                         time.sleep(.5)
@@ -135,7 +136,7 @@ class RelevantActionEnvironment(Environment):
         did_action = False
         while tm.time() - start_time < self.animation_monitor_time:
             self.has_state_changed = True
-            states.append(self.read_state())
+            states.append(self.read_state(perform_checks=False))
             tm.sleep(self.screenshots_interval)
             if not did_action:
                 wait_action()
@@ -176,7 +177,7 @@ class RelevantActionEnvironment(Environment):
         tmp_time = tm.time()
         while tmp_time - action_time < self.action_max_wait_time:
             self.has_state_changed = True
-            tmp_state = self.read_state()
+            tmp_state = self.read_state(perform_checks=False)
             tm.sleep(self.screenshots_interval)
             screenshot_count += 1
             # remember having animation_mask in this comparison is just an approximation to end this while sooner
@@ -191,6 +192,7 @@ class RelevantActionEnvironment(Environment):
                 break
             tmp_time = tm.time()
 
+        self.has_state_changed = True
         self.changed_from_last = not self.are_states_equal(last_state, self.read_state(), None)
         print(f'{datetime.now()}: change from last in {self.phone.device_name}: {self.changed_from_last}')
 
@@ -227,7 +229,7 @@ class RelevantActionEnvironment(Environment):
                 not self.phone.is_in_app(self.get_current_app(), self.force_app_on_top):
             self.in_blank_screen = False
             try:
-                self.phone.restart()
+                self.phone.restart(recreate_phone=self.just_restarted)
             except Exception:
                 self.phone.start_phone(True)
             self.phone.open_app(self.get_current_app())
