@@ -53,7 +53,7 @@ class Phone:
     def maintain_current_activity(self):
         try:
             tmp = self.adb('shell "dumpsys activity activities | grep mResumedActivity"').strip()
-            match = re.match('ActivityRecord{.+ .+ (.+) .+}', tmp)
+            match = re.match('.*ActivityRecord{.+ .+ (.+) .+}.*', tmp)
             print(f'{datetime.now()}: activity {match[1]} is visited in {self.device_name}')
             self.visited_activities.add(match[1])
         except Exception as ex:

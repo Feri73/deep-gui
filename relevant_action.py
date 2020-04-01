@@ -143,6 +143,8 @@ class RelevantActionEnvironment(Environment):
                 did_action = True
         if not did_action:
             wait_action()
+        if len(states)==0:
+            return None
         res = np.any(np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0), axis=-1)
         first_animation = np.where(res == 0)
         first_animation = None if len(first_animation[0]) == 0 else next(zip(*np.where(res == 0)))
