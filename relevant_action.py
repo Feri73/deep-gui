@@ -19,6 +19,7 @@ class RelevantActionEnvironment(Environment):
         self.action2pos = action2pos
 
         self.steps_per_app = cfg['steps_per_app']
+        self.steps_per_app_reopen = cfg['steps_per_app_reopen']
         self.steps_per_episode = cfg['steps_per_episode']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
@@ -36,8 +37,11 @@ class RelevantActionEnvironment(Environment):
         self.action_freeze_wait_time = cfg['action_freeze_wait_time']
         self.screenshots_interval = cfg['screenshots_interval']
         self.remove_bad_apps = cfg['remove_bad_apps']
+        self.start_phone_fresh = cfg['start_phone_fresh']
         shuffle_apps = cfg['shuffle_apps']
         assert self.steps_per_app % self.steps_per_episode == 0
+        assert self.steps_per_app % self.steps_per_app_reopen == 0
+        assert self.steps_per_app_reopen % self.steps_per_episode == 0
 
         self.step = 0
         self.finished = False
@@ -48,7 +52,7 @@ class RelevantActionEnvironment(Environment):
         self.animation_mask = None
         self.changed_from_last = True
 
-        self.phone.start_phone()
+        self.phone.start_phone(fresh=self.start_phone_fresh)
 
         if shuffle_apps:
             # better way for doing this
@@ -59,7 +63,7 @@ class RelevantActionEnvironment(Environment):
             self.phone.apk_names = list(self.phone.apk_names)
 
     def get_current_app(self, apk: bool = False, step: int = None) -> str:
-        step = self.step if step is None else step
+        step = max(self.step if step is None else step, 0)
         if apk:
             return self.phone.apk_names[(step // self.steps_per_app) % len(self.phone.apk_names)]
         return self.phone.app_names[(step // self.steps_per_app) % len(self.phone.app_names)]
@@ -76,9 +80,10 @@ class RelevantActionEnvironment(Environment):
 
     def restart(self) -> None:
         self.finished = False
-        if self.step % self.steps_per_app == 0:
+        if self.step % self.steps_per_app_reopen == 0 or self.step % self.steps_per_app == 0:
             try:
-                self.phone.close_app(self.get_current_app(step=self.step - 1))
+                self.phone.close_app(self.get_current_app(step=self.step - 1),
+                                     reset_maintained_activities=self.step % self.steps_per_app == 0)
             except Exception:
                 pass
             # if self.cur_app_index == 0:
@@ -143,7 +148,7 @@ class RelevantActionEnvironment(Environment):
                 did_action = True
         if not did_action:
             wait_action()
-        if len(states)==0:
+        if len(states) == 0:
             return None
         res = np.any(np.all(np.array(states) - states[0] <= self.pixel_equality_threshold, axis=0), axis=-1)
         first_animation = np.where(res == 0)

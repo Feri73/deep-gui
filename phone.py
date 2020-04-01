@@ -164,7 +164,8 @@ class Phone:
             res = subprocess.check_output(command, shell=True).decode('utf-8')
             regex = re.compile(r'name=\'([^\']+)\'')
             return regex.search(res).group(1)
-        except Exception:
+        except Exception as ex:
+            print(f'{datetime.now()}: could not get app name for {apk_path} in {self.device_name} because of {ex}')
             return None
 
     def save_snapshot(self, name: str) -> None:
@@ -179,12 +180,13 @@ class Phone:
     def sync_time(self):
         self.adb('shell su root date ' + datetime.now().strftime('%m%d%H%M%Y.%S'))
 
-    def close_app(self, app_name: str) -> None:
+    def close_app(self, app_name: str, reset_maintained_activities: bool = True) -> None:
         print(f'{datetime.now()}: closing {app_name} in {self.device_name}')
         # self.adb(f'shell su root pm clear {app_name}')
         self.adb(f'shell am force-stop {app_name}')
         time.sleep(self.app_exit_wait_time)
-        self.visited_activities = set()
+        if reset_maintained_activities:
+            self.visited_activities = set()
 
     def add_app_activity(self, app_name: str) -> None:
         dat = self.adb(f'shell dumpsys package {app_name} | grep -A1 "android.intent.action.MAIN:"')
@@ -256,7 +258,7 @@ class DummyPhone:
     def install_apk(self, apk_name: str) -> None:
         pass
 
-    def close_app(self, app_name: str) -> None:
+    def close_app(self, app_name: str, reset_maintained_activities: bool = True) -> None:
         self.background = None
 
     def open_app(self, app_name: str) -> None:
