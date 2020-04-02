@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+import shutil
 import re
 import subprocess
 import time
@@ -120,13 +121,10 @@ class Phone:
 
     def recreate_emulator(self) -> None:
         print(f'{datetime.now()}: recreating emulator for {self.device_name}')
-        while True:
-            try:
-                os.remove(f'{self.avd_path}/{self.device_name}.ini')
-                os.rmdir(f'{self.avd_path}/{self.device_name}.avd/')
-                break
-            except:
-                pass
+        while os.path.exists(f'{self.avd_path}/{self.device_name}.ini'):
+            os.remove(f'{self.avd_path}/{self.device_name}.ini')
+        while os.path.exists(f'{self.avd_path}/{self.device_name}.avd/'):
+            shutil.rmtree(f'{self.avd_path}/{self.device_name}.avd/')
         os.system(f'{self.clone_script_path} {self.device_name}')
 
     def start_emulator(self, fresh: bool = False) -> None:
