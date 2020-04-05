@@ -783,7 +783,9 @@ class CollectorLogger(EnvironmentCallbacks):
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
         self.rewards.append(np.array(reward))
-        self.activity_count.append(np.array(len(self.environment.phone.visited_activities)))
+        valid_visited_activities = {x for x in self.environment.phone.visited_activities
+                                    if x.startswith(self.environment.get_current_app())}
+        self.activity_count.append(np.array(len(valid_visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
             self.log_scalar('Metrics/Reward', self.rewards)
             self.log_scalar('Metrics/Activity Count', self.activity_count)
