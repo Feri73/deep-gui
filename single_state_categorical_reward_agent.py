@@ -734,8 +734,10 @@ class CollectorLogger(EnvironmentCallbacks):
         self.image_log_frequency = cfg['image_log_frequency']
         self.prediction_overlay_factor = cfg['prediction_overlay_factor']
         self.dir = cfg['dir']
+        self.steps_per_new_file = cfg['steps_per_new_file']
         self.environment = None
 
+        self.name = name
         self.action_for_screen = action_for_screen
         self.to_preprocessed_coord = to_preprocessed_coord
 
@@ -747,7 +749,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.prediction = None
         self.clustering = None
         self.scalars = {}
-        self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{name}')
+        self.summary_writer = None
         self.summary = tf.Summary()
 
         preds_clusterer.add_callback(self.on_new_clustering)
@@ -801,6 +803,10 @@ class CollectorLogger(EnvironmentCallbacks):
         self.scalars = {}
 
     def on_wait(self) -> None:
+        if self.local_step % self.steps_per_new_file == 0:
+            chunk = self.local_step // self.steps_per_new_file
+            print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
+            self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
 
@@ -901,7 +907,8 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 
 class PredictionClusterer:
     def __init__(self, cfg: Config):
-        self.clickable_threshold = cfg['clickable_threshold']
+        self.start_clickable_threshold = cfg['start_clickable_threshold']
+        self.clickable_threshold_step_speed = cfg['clickable_threshold_step_speed']
         self.distance_threshold = cfg['distance_threshold']
         self.cluster_count_threshold = cfg['cluster_count_threshold']
 
@@ -916,7 +923,7 @@ class PredictionClusterer:
         if preds.shape[0] > 1:
             raise NotImplementedError('cluster reward is not implemented for batch size > 1.')
         preds_old, preds = preds, preds[0]
-        clickables = tf.cast(tf.where(preds > self.clickable_threshold), tf.int32)
+        clickables = tf.cast(tf.where(preds > self.start_clickable_threshold), tf.int32)
         if len(clickables) == 0:
             return random_reward_to_action(preds_old)
         if len(clickables) == 1:
@@ -936,6 +943,7 @@ class PredictionClusterer:
             chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
             for callback in self.callbacks:
                 callback(clickables, clusters, valid_clusters_nums)
+        self.start_clickable_threshold -= self.clickable_threshold_step_speed
         return tf.expand_dims(chosen_clickable, axis=0)
 
 
