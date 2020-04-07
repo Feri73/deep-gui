@@ -910,22 +910,29 @@ def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 class PredictionClusterer:
     def __init__(self, cfg: Config):
         self.start_clickable_threshold = cfg['start_clickable_threshold']
-        self.clickable_threshold_step_speed = cfg['clickable_threshold_step_speed']
+        self.clickable_threshold_speed = cfg['clickable_threshold_speed']
+        self.clickable_threshold_speed_step = cfg['clickable_threshold_speed_step']
+        self.speed_steps_per_clickable_threshold_reset = cfg['speed_steps_per_clickable_threshold_reset']
         self.distance_threshold = cfg['distance_threshold']
         self.cluster_count_threshold = cfg['cluster_count_threshold']
 
         self.callbacks = []
+        self.steps = 0
 
     def add_callback(self, callback: Callable) -> None:
         self.callbacks.append(callback)
 
     def __call__(self, preds: tf.Tensor) -> tf.Tensor:
+        clickable_threshold = self.start_clickable_threshold - self.clickable_threshold_speed * \
+                              ((self.steps // self.clickable_threshold_speed_step) %
+                               self.speed_steps_per_clickable_threshold_reset)
+        self.steps += 1
         if preds.shape[-1] > 1:
             raise NotImplementedError('Currently cannot use clustering reward to action for actions other than click.')
         if preds.shape[0] > 1:
             raise NotImplementedError('cluster reward is not implemented for batch size > 1.')
         preds_old, preds = preds, preds[0]
-        clickables = tf.cast(tf.where(preds > self.start_clickable_threshold), tf.int32)
+        clickables = tf.cast(tf.where(preds > clickable_threshold), tf.int32)
         if len(clickables) == 0:
             return random_reward_to_action(preds_old)
         if len(clickables) == 1:
@@ -945,7 +952,6 @@ class PredictionClusterer:
             chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
             for callback in self.callbacks:
                 callback(clickables, clusters, valid_clusters_nums)
-        self.start_clickable_threshold -= self.clickable_threshold_step_speed
         return tf.expand_dims(chosen_clickable, axis=0)
 
 
