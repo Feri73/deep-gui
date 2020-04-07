@@ -1,3 +1,4 @@
+import os
 import time
 import time as tm
 import traceback
@@ -47,7 +48,6 @@ class RelevantActionEnvironment(Environment):
         self.finished = False
         self.current_state = None
         self.has_state_changed = True
-        self.just_restarted = False
         self.in_blank_screen = False
         self.animation_mask = None
         self.changed_from_last = True
@@ -128,14 +128,13 @@ class RelevantActionEnvironment(Environment):
                     self.phone.is_in_app(self.get_current_app(), self.force_app_on_top):
                 res = self.phone.send_event(*action)
                 self.has_state_changed = True
-                self.just_restarted = False
                 return res
             trials -= 1
             if trials > 0:
                 time.sleep(1)
         raise SystemError("invalid phone state.")
 
-    def get_animation_mask(self, wait_action: Callable) -> np.ndarray:
+    def get_animation_mask(self, wait_action: Callable) -> Optional[np.ndarray]:
         start_time = tm.time()
         states = []
         did_action = False
@@ -214,33 +213,74 @@ class RelevantActionEnvironment(Environment):
 
         return reward
 
+    def re_set_current_app(self, remove_app: bool) -> None:
+        print(f'{datetime.now()}: seems like {self.get_current_app()} causes trouble. ', end='')
+        if remove_app:
+            print(f'removing it from phone #{self.phone.device_name}')
+            self.phone.app_names.remove(self.get_current_app())
+            self.phone.apk_names.remove(self.get_current_app(apk=True))
+        else:
+            print(f'reinstalling it to phone #{self.phone.device_name}')
+            try:
+                self.phone.install_apk(self.get_current_app(apk=True))
+            except Exception:
+                self.re_set_current_app(True)
+
+    def restart_phone(self, recreate_phone: bool) -> None:
+        try:
+            self.phone.restart(recreate_phone=recreate_phone)
+        except Exception:
+            self.phone.start_phone(True)
+
+    def checked_open_app(self) -> bool:
+        try:
+            if self.phone.is_booted():
+                self.phone.open_app(self.get_current_app())
+                self.read_state()
+                return self.phone.is_in_app(self.get_current_app(), self.force_app_on_top)
+            else:
+                return False
+        except Exception:
+            return False
+
+    def handle_error(self) -> None:
+        if self.checked_open_app():
+            return
+
+        try:
+            self.restart_phone(False)
+            if self.checked_open_app():
+                return
+        except Exception:
+            pass
+
+        try:
+            self.restart_phone(False)
+            self.re_set_current_app(self.remove_bad_apps)
+            if self.checked_open_app():
+                return
+        except Exception:
+            pass
+
+        try:
+            self.restart_phone(True)
+            if self.checked_open_app():
+                return
+        except Exception:
+            print(f'{datetime.now()}: It seems {self.phone.device_name} is stuck in a bad error.'
+                  f' Creating lock file until manual intervention. Error :\n{traceback.format_exc()}')
+            file_name = f'~/.broken_{self.phone.device_name}.lock'
+            open(file_name, 'a').close()
+            while os.path.exists(file_name):
+                time.sleep(10)
+            self.handle_error()
+
     def on_error(self):
         super().on_error()
 
-        if self.just_restarted:
-            print(f'{datetime.now()}: seems like {self.get_current_app()} causes trouble. ', end='')
-            if self.remove_bad_apps:
-                print(f'removing it from phone #{self.phone.device_name}')
-                self.phone.app_names.remove(self.get_current_app())
-                self.phone.apk_names.remove(self.get_current_app(apk=True))
-            else:
-                print(f'reinstalling it to phone #{self.phone.device_name}')
-                self.phone.install_apk(self.get_current_app(apk=True))
-        else:
-            try:
-                if self.phone.is_booted():
-                    self.phone.open_app(self.get_current_app())
-            except Exception:
-                pass
-        if self.just_restarted or self.in_blank_screen or \
-                not self.phone.is_in_app(self.get_current_app(), self.force_app_on_top):
-            self.in_blank_screen = False
-            try:
-                self.phone.restart(recreate_phone=self.just_restarted)
-            except Exception:
-                self.phone.start_phone(True)
-            self.phone.open_app(self.get_current_app())
-            self.just_restarted = not self.just_restarted
+        self.handle_error()
+
+        self.in_blank_screen = False
         self.has_state_changed = True
         self.changed_from_last = True
 
