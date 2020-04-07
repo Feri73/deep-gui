@@ -269,7 +269,7 @@ class RelevantActionEnvironment(Environment):
         except Exception:
             print(f'{datetime.now()}: It seems {self.phone.device_name} is stuck in a bad error.'
                   f' Creating lock file until manual intervention. Error :\n{traceback.format_exc()}')
-            file_name = f'~/.broken_{self.phone.device_name}.lock'
+            file_name = f'/.broken_{self.phone.device_name}.lock'
             open(file_name, 'a').close()
             while os.path.exists(file_name):
                 time.sleep(10)
