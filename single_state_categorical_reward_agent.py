@@ -561,8 +561,18 @@ class ScreenPreprocessor(keras.layers.Layer):
         return screens
 
 
-# instead of this use more complicated existing models
-class ScreenParser(keras.layers.Layer):
+class EncodingRewardPredictor(keras.layers.Layer):
+    def __init__(self, screen_encoder: keras.layers.Layer, reward_decoder: keras.layers.Layer, **kwarg):
+        self.screen_encoder = screen_encoder
+        self.reward_decoder = reward_decoder
+
+        super().__init__(**kwarg)
+
+    def call(self, screens, **kwargs):
+        return self.reward_decoder(self.screen_encoder(screens))
+
+
+class SimpleScreenEncoder(keras.layers.Layer):
     def __init__(self, cfg: Config, **kwargs):
         self.padding_type = cfg['padding_type']
         self.filter_nums = cfg['filter_nums']
@@ -588,24 +598,7 @@ class ScreenParser(keras.layers.Layer):
         return screens
 
 
-class UNetScreenParser(keras.layers.Layer):
-    def __init__(self, cfg: Config, **kwargs):
-        self.output_layer_names = cfg['output_layer_names']
-        self.inner_configs = cfg['inner_configs']
-        super().__init__(**kwargs)
-        self.encoder = None
-
-    def build(self, input_shape):
-        net = keras.applications.MobileNetV2(input_shape=tuple(int(x) for x in input_shape[1:]),
-                                             include_top=False, **self.inner_configs)
-        self.encoder = keras.Model(inputs=net.input,
-                                   outputs=[net.get_layer(name).output for name in self.output_layer_names])
-
-    def call(self, screens, **kwargs):
-        return self.encoder(screens)
-
-
-class RewardPredictor(keras.layers.Layer):
+class SimpleRewardDecoder(keras.layers.Layer):
     def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
         super().__init__(**kwargs)
 
@@ -628,7 +621,35 @@ class RewardPredictor(keras.layers.Layer):
         return parsed_screens
 
 
-class UNetRewardPredictor(keras.layers.Layer):
+class SimpleRewardPredictor(EncodingRewardPredictor):
+    def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
+        prediction_shape = cfg['prediction_shape']
+        screen_encoder_cfg = cfg['screen_encoder_configs']
+
+        reward_decoder_cfg = {'prediction_shape': prediction_shape}
+
+        super().__init__(SimpleScreenEncoder(screen_encoder_cfg),
+                         SimpleRewardDecoder(action_type_count, reward_categories_count, reward_decoder_cfg), **kwargs)
+
+
+class UNetScreenEncoder(keras.layers.Layer):
+    def __init__(self, cfg: Config, **kwargs):
+        self.output_layer_names = cfg['output_layer_names']
+        self.inner_configs = cfg['inner_configs']
+        super().__init__(**kwargs)
+        self.encoder = None
+
+    def build(self, input_shape):
+        net = keras.applications.MobileNetV2(input_shape=tuple(int(x) for x in input_shape[1:]),
+                                             include_top=False, **self.inner_configs)
+        self.encoder = keras.Model(inputs=net.input,
+                                   outputs=[net.get_layer(name).output for name in self.output_layer_names])
+
+    def call(self, screens, **kwargs):
+        return self.encoder(screens)
+
+
+class UNetRewardDecoder(keras.layers.Layer):
     def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
         self.filter_nums = cfg['filter_nums']
         self.kernel_sizes = cfg['kernel_sizes']
@@ -684,6 +705,32 @@ class UNetRewardPredictor(keras.layers.Layer):
         return result
 
 
+class UNetRewardPredictor(EncodingRewardPredictor):
+    def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
+        screen_encoder_cfg = cfg['screen_encoder_configs']
+        reward_decoder_cfg = cfg['reward_decoder_configs']
+        reward_decoder_cfg['prediction_shape'] = cfg['prediction_shape']
+
+        super().__init__(UNetScreenEncoder(screen_encoder_cfg),
+                         UNetRewardDecoder(action_type_count, reward_categories_count, reward_decoder_cfg), **kwargs)
+
+
+class RandomRewardPredictor(keras.layers.Layer):
+    def __init__(self, action_type_count: int, reward_categories_count: int, cfg: Config, **kwargs):
+        self.prediction_shape = cfg['prediction_shape']
+
+        super().__init__(**kwargs)
+
+        self.action_type_count = action_type_count
+        self.reward_categories_count = reward_categories_count
+
+        if self.reward_categories_count != 2:
+            raise NotImplementedError('For now only support binary rewards.')
+
+    def call(self, screens, **kwargs):
+        return tf.random.uniform((screens.shape[0], *self.prediction_shape, self.action_type_count))
+
+
 class BufferLogger(keras.layers.Layer):
     def __init__(self, freq: int, handler: Callable, aggregate: bool, **kwargs):
         super().__init__(**kwargs)
@@ -727,14 +774,16 @@ def cond_flush(step: int, values: np.ndarray = None, buffer_logger: 'BufferLogge
 
 
 class CollectorLogger(EnvironmentCallbacks):
-    def __init__(self, name: str, screen_preprocessor: ScreenPreprocessor, screen_parser: ScreenParser,
-                 reward_predictor: RewardPredictor, preds_clusterer: 'PredictionClusterer',
-                 action_for_screen: Callable, to_preprocessed_coord: Callable, cfg: Config):
+    def __init__(self, name: str, preprocessed_screen: tf.Tensor, reward_prediction: tf.Tensor,
+                 preds_clusterer: 'PredictionClusterer', action_for_screen: Callable,
+                 to_preprocessed_coord: Callable, cfg: Config):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.prediction_overlay_factor = cfg['prediction_overlay_factor']
         self.dir = cfg['dir']
         self.steps_per_new_file = cfg['steps_per_new_file']
+        self.log_preprocessed_screen = cfg['log_preprocessed_screen']
+        self.log_reward_prediction = cfg['log_reward_prediction']
         self.environment = None
 
         self.name = name
@@ -753,17 +802,21 @@ class CollectorLogger(EnvironmentCallbacks):
         self.summary = tf.Summary()
 
         preds_clusterer.add_callback(self.on_new_clustering)
-        self.dependencies = [
-            BufferLogger(self.image_log_frequency,
-                         self.on_new_preprocessed_screen, False)(screen_preprocessor.output[0]),
-            BufferLogger(self.image_log_frequency, self.on_new_prediction, False)(reward_predictor.output[0]),
-            BufferLogger(self.scalar_log_frequency,
-                         partial(self.on_new_scalar,
-                                 'Predictions/Mean'), True)(tf.reduce_mean(reward_predictor.output[0])),
-            BufferLogger(self.scalar_log_frequency,
-                         partial(self.on_new_scalar,
-                                 'Predictions/Std'), True)(tf.math.reduce_std(reward_predictor.output[0]))
-        ]
+        self.dependencies = []
+        if self.log_preprocessed_screen:
+            self.dependencies.append(
+                BufferLogger(self.image_log_frequency,
+                             self.on_new_preprocessed_screen, False)(preprocessed_screen[0]))
+        if self.log_reward_prediction:
+            self.dependencies += [
+                BufferLogger(self.image_log_frequency, self.on_new_prediction, False)(reward_prediction[0]),
+                BufferLogger(self.scalar_log_frequency,
+                             partial(self.on_new_scalar,
+                                     'Predictions/Mean'), True)(tf.reduce_mean(reward_prediction[0])),
+                BufferLogger(self.scalar_log_frequency,
+                             partial(self.on_new_scalar,
+                                     'Predictions/Std'), True)(tf.math.reduce_std(reward_prediction[0]))
+            ]
 
     def set_environment(self, environment: RelevantActionEnvironment):
         self.environment = environment
@@ -795,8 +848,10 @@ class CollectorLogger(EnvironmentCallbacks):
             # assert self.action is None
             self.action = action
             self.log_screen('Screen/Original', src_state, lambda x: x, self.environment.animation_mask)
-            self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
-            self.log_predictions(self.prediction, self.clustering)
+            if self.log_preprocessed_screen:
+                self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
+            if self.log_reward_prediction:
+                self.log_predictions(self.prediction, self.clustering)
         for name in self.scalars:
             self.log_scalar(name, self.scalars[name])
         self.action = None
@@ -1021,16 +1076,15 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     collectors_clone_script = cfg['collectors_clone_script']
     testers_clone_script = cfg['testers_clone_script']
     distort_color_probability = cfg['distort_color_probability']
-    use_unet = cfg['use_unet']
-    screen_parser_configs = cfg[f'{"unet" if use_unet else ""}_screen_parser_configs']
-    reward_predictor_configs = cfg[f'{"unet" if use_unet else ""}_reward_predictor_configs']
+    reward_predictor = cfg['reward_predictor']
+    prediction_shape = cfg['prediction_shape']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
     screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
     screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
-    prediction_shape = reward_predictor_configs['prediction_shape']
+    reward_predictor_configs = cfg[f'{reward_predictor[1]}_reward_predictor_configs']
 
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
@@ -1047,9 +1101,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
-
-    screen_parser_type = UNetScreenParser if use_unet else ScreenParser
-    reward_predictor_type = UNetRewardPredictor if use_unet else RewardPredictor
+    reward_predictor_configs['prediction_shape'] = prediction_shape
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
@@ -1067,10 +1119,10 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
                                       name='state', dtype=example_episode.state.dtype)
 
     screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs)
-    screen_parser = screen_parser_type(screen_parser_configs)
-    reward_predictor = reward_predictor_type(action_type_count, 2, reward_predictor_configs)
+    reward_predictor = eval(reward_predictor[0])(action_type_count, 2, reward_predictor_configs)
 
-    predictions = reward_predictor(screen_parser(screen_preprocessor(screen_input)))
+    predictions = reward_predictor(screen_preprocessor(screen_input))
+
     if is_learner:
         action_input = keras.layers.Input(example_episode.action.shape, batch_size,
                                           name='action', dtype=example_episode.action.dtype)
@@ -1083,7 +1135,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
                                                                    agent_option_probs))(predictions)
 
         logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
-                                 screen_preprocessor, screen_parser, reward_predictor,
+                                 screen_preprocessor.output, reward_predictor.output,
                                  built_prediction_to_action_options[0], action_pos_to_screen_pos,
                                  lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
                                                               screen_preprocessor_resize_size_a /

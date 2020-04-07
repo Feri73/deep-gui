@@ -207,9 +207,9 @@ class Phone:
         if self.maintain_visited_activities and perform_checks:
             self.maintain_current_activity()
         self.step += 1
-        screenshot_dir = os.path.abspath(f'tmp-{self.device_name}')
+        screenshot_dir = os.path.abspath(f'.tmp-{self.device_name}')
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
-        image_path = glob.glob(f'tmp-{self.device_name}/Screenshot*.png')[0]
+        image_path = glob.glob(f'.tmp-{self.device_name}/Screenshot*.png')[0]
         res = mpimg.imread(image_path)[:, :, :-1]
         os.remove(image_path)
         return (res * 255).astype(np.uint8)
