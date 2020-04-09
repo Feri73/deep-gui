@@ -802,11 +802,8 @@ class CollectorLogger(EnvironmentCallbacks):
         self.summary = tf.Summary()
 
         preds_clusterer.add_callback(self.on_new_clustering)
-        self.dependencies = []
-        if self.log_preprocessed_screen:
-            self.dependencies.append(
-                BufferLogger(self.image_log_frequency,
-                             self.on_new_preprocessed_screen, False)(preprocessed_screen[0]))
+        self.dependencies = [BufferLogger(self.image_log_frequency,
+                                          self.on_new_preprocessed_screen, False)(preprocessed_screen[0])]
         if self.log_reward_prediction:
             self.dependencies += [
                 BufferLogger(self.image_log_frequency, self.on_new_prediction, False)(reward_prediction[0]),
