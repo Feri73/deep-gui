@@ -339,11 +339,12 @@ class LearningAgent:
         else:
             print(f'{datetime.now()}: starting learning for experience version {version}')
             data = generator()
+            steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
             checkpoint_callback = keras.callbacks.ModelCheckpoint(
-                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}',
+                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' + '{epoch:02d}-{loss:.2f}',
                 monitor='loss', save_best_only=False, save_weights_only=True,
-                save_freq=int(self.save_frequency * (data_size // self.batch_size) * self.batch_size))
-            self.model.fit(data, epochs=self.epochs_per_version, steps_per_epoch=data_size // self.batch_size,
+                save_freq=int(self.save_frequency * steps_per_epoch * self.batch_size))
+            self.model.fit(data, epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
                            callbacks=[checkpoint_callback])
             del data
 
@@ -799,7 +800,10 @@ class CollectorLogger(EnvironmentCallbacks):
         self.clustering = None
         self.scalars = {}
         self.summary_writer = None
+        self.max_activity_count_summary_writer = None
         self.summary = tf.Summary()
+        self.current_apk = None
+        self.current_apk_max_activities = None
 
         preds_clusterer.add_callback(self.on_new_clustering)
         self.dependencies = [BufferLogger(self.image_log_frequency,
@@ -838,9 +842,13 @@ class CollectorLogger(EnvironmentCallbacks):
         self.activity_count.append(np.array(len(valid_visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
             self.log_scalar('Metrics/Reward', self.rewards)
-            self.log_scalar('Metrics/Activity Count', self.activity_count)
+            if self.environment.phone.maintain_visited_activities:
+                self.log_scalar('Metrics/Activity Count', self.activity_count)
+            for name in self.scalars:
+                self.log_scalar(name, self.scalars[name])
             self.rewards = []
             self.activity_count = []
+            self.scalars = {}
         if self.local_step % self.image_log_frequency == 0:
             # assert self.action is None
             self.action = action
@@ -849,18 +857,32 @@ class CollectorLogger(EnvironmentCallbacks):
                 self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
             if self.log_reward_prediction:
                 self.log_predictions(self.prediction, self.clustering)
-        for name in self.scalars:
-            self.log_scalar(name, self.scalars[name])
         self.action = None
         self.preprocessed_screen = None
         self.clustering = None
-        self.scalars = {}
+
+    def add_max_activity_summary(self, recalculate: bool) -> None:
+        summary = tf.Summary()
+        if recalculate:
+            self.current_apk = self.environment.get_current_app(apk=True)
+            self.current_apk_max_activities = len([
+                ac for ac in self.environment.phone.get_app_all_activities(self.current_apk)
+                if ac.startswith(self.environment.get_current_app())])
+        summary.value.add(tag="Metrics/Activity Count", simple_value=self.current_apk_max_activities)
+        self.max_activity_count_summary_writer.add_summary(summary, self.local_step - int(not recalculate))
 
     def on_wait(self) -> None:
         if self.local_step % self.steps_per_new_file == 0:
             chunk = self.local_step // self.steps_per_new_file
             print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
+        if self.environment.phone.maintain_visited_activities and \
+                self.environment.get_current_app(apk=True) != self.current_apk:
+            if self.max_activity_count_summary_writer is not None:
+                self.add_max_activity_summary(False)
+            self.max_activity_count_summary_writer = tf.summary.FileWriter(
+                f'{self.summary_writer.get_logdir()}_{self.environment.get_current_app()}_activity_count')
+            self.add_max_activity_summary(True)
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
 
@@ -1056,7 +1078,15 @@ def control_dependencies(inputs) -> tf.Tensor:
     return x
 
 
-def create_agent(id: int, is_learner: bool, is_tester: bool,
+def linear_combination(funcs: List[Callable], coeffs: List[float] = None) -> Callable:
+    return lambda *inps: sum([c * f(inps) for c, f in zip(coeffs, funcs)])
+
+
+def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
+    return tf.reduce_mean(tf.reduce_mean(tf.math.reduce_variance(preds, axis=[1, 2]), axis=-1))
+
+
+def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool,
                  agent_option_probs: List[float]) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
@@ -1075,6 +1105,8 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     distort_color_probability = cfg['distort_color_probability']
     reward_predictor = cfg['reward_predictor']
     prediction_shape = cfg['prediction_shape']
+    variance_reg_coeff = cfg['variance_reg_coeff']
+    l1_reg_coeff = cfg['l1_reg_coeff']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -1121,14 +1153,23 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
     predictions = reward_predictor(screen_preprocessor(screen_input))
 
     if is_learner:
+        regs, coeffs = [], []
+        if variance_reg_coeff != 0:
+            regs.append(preds_variance_regularizer)
+            coeffs.append(-variance_reg_coeff)
+        if l1_reg_coeff != 0:
+            regs.append(keras.regularizers.l1(l1_reg_coeff))
+            coeffs.append(1)
+        if len(regs) > 0:
+            reward_predictor.activity_regularizer = linear_combination(regs, coeffs)
         action_input = keras.layers.Input(example_episode.action.shape, batch_size,
                                           name='action', dtype=example_episode.action.dtype)
         input = (screen_input, action_input)
-        output = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
+        action = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
     else:
         input = screen_input
         built_prediction_to_action_options = [prediction_to_action_options[0]()] + prediction_to_action_options[1:]
-        output = keras.layers.Lambda(combine_prediction_to_actions(built_prediction_to_action_options,
+        action = keras.layers.Lambda(combine_prediction_to_actions(built_prediction_to_action_options,
                                                                    agent_option_probs))(predictions)
 
         logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
@@ -1139,9 +1180,9 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
                                                               screen_preprocessor_crop_size_a, np.array([0, 0])),
                                  collector_logger_configs)
 
-        output = keras.layers.Lambda(control_dependencies)((output, logger.get_dependencies()))
+        action = keras.layers.Lambda(control_dependencies)((action, logger.get_dependencies()))
 
-    model = keras.Model(inputs=input, outputs=output)
+    model = keras.Model(inputs=input, outputs=action)
 
     if is_learner:
         if weights_file is not None:
@@ -1156,7 +1197,7 @@ def create_agent(id: int, is_learner: bool, is_tester: bool,
 
     def create_environment(collector: DataCollectionAgent) -> Environment:
         env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
-                                                              5554 + 2 * id, phone_configs),
+                                                              5554 + 2 * agent_num, phone_configs),
                                         action2pos, environment_configs)
         env.add_callback(logger)
         logger.set_environment(env)
@@ -1202,11 +1243,11 @@ os.environ["KMP_AFFINITY"] = "verbose"
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
-    collector_creators = [partial(create_agent, i, False, False, probs)
+    collector_creators = [partial(create_agent, i, i, False, False, probs)
                           for i, probs in enumerate(collector_option_probs)]
-    tester_creators = [partial(create_agent, i + len(collector_creators), False, True, probs)
+    tester_creators = [partial(create_agent, i, i + len(collector_creators), False, True, probs)
                        for i, probs in enumerate(tester_option_probs)]
-    learner_creator = partial(create_agent, len(collector_creators) + len(tester_creators), True, False, None)
+    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),), True, False, None)
     coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 

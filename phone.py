@@ -4,7 +4,7 @@ import shutil
 import re
 import subprocess
 import time
-from typing import Union, Optional
+from typing import Union, Optional, List
 
 import matplotlib.image as mpimg
 import numpy as np
@@ -25,6 +25,8 @@ class Phone:
         self.app_exit_wait_time = cfg['app_exit_wait_time']
         self.phone_boot_wait_time = cfg['phone_boot_wait_time']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
+        self.phone_start_boot_max_wait_time = cfg['phone_start_boot_max_wait_time']
+        self.phone_restart_kill_max_wait_time = cfg['phone_restart_kill_max_wait_time']
         # self.screenshot_trials = cfg['screenshot_trials']
         self.avd_path = cfg['avd_path']
         apks_path = cfg['apks_path']
@@ -58,7 +60,8 @@ class Phone:
             print(f'{datetime.now()}: activity {match[1]} is visited in {self.device_name}')
             self.visited_activities.add(match[1])
         except Exception as ex:
-            print(f'{datetime.now()}: exception happened while maintaining current activity -> {ex}')
+            print(f'{datetime.now()}: '
+                  f'exception happened while maintaining current activity in {self.device_name} -> {ex}')
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         try:
@@ -80,25 +83,31 @@ class Phone:
         return False
 
     def is_booted(self):
-        print(f'{datetime.now()}: checking boot status of {self.device_name}')
+        print(f'{datetime.now()}: checking boot status of {self.device_name}: ', end='')
         try:
             # this 2s should be param probably
-            return self.adb('shell timeout 2s getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
+            res = self.adb('shell timeout 2s getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
         except subprocess.CalledProcessError:
-            return False
+            res = False
+        print(f'{res}')
+        return res
 
     def wait_for_start(self) -> None:
+        print(f'{datetime.now()}: wait-for-device in {self.device_name}')
         self.adb('wait-for-device')
-        while not self.is_booted():
+        print(f'{datetime.now()}: passed wait-for-device in {self.device_name}')
+        st = time.time()
+        while time.time() - st < self.phone_start_boot_max_wait_time and not self.is_booted():
             time.sleep(2)
         time.sleep(self.phone_boot_wait_time)
 
     def restart(self, recreate_phone: bool = False):
         print(f'{datetime.now()}: restarting {self.device_name}')
         self.adb('emu kill')
+        st = time.time()
         # this is not a good way of checking if the phone is off. because the phone may be already starting,
         #    not completely booted tho. this means that i try to start the phone twice.
-        while self.is_booted():
+        while time.time() - st < self.phone_restart_kill_max_wait_time and self.is_booted():
             time.sleep(1)
         if recreate_phone:
             self.recreate_emulator()
@@ -192,6 +201,20 @@ class Phone:
         activityRE = re.compile('([A-Za-z0-9_.]+/[A-Za-z0-9_.]+)')
         self.app_activity_dict[app_name] = activityRE.search(lines[1]).group(1)
 
+    def get_app_all_activities(self, apk_path: str) -> List[str]:
+        # add caching here
+        try:
+            apk_path = os.path.abspath(apk_path)
+            sed_pattern = r'/ activity /{:loop n;s/^.*android:name.*="\([^"]\{1,\}\)".*/\1/;T loop;p;t}'
+            command = f'{self.aapt_path} list -a "{apk_path}" | sed -n \'{sed_pattern}\''
+            res = subprocess.check_output(command, shell=True).decode('utf-8')
+            res = res.split('\n')
+            return [r for r in res if len(r) > 0]
+        except Exception as ex:
+            print(f'{datetime.now()}: could not get all activities for'
+                  f' {apk_path} in {self.device_name} because of {ex}')
+            return []
+
     def open_app(self, app_name: str) -> None:
         print(f'{datetime.now()}: opening {app_name} in {self.device_name}')
         if app_name not in self.app_activity_dict:
@@ -231,6 +254,7 @@ class DummyPhone:
         self.configs = cfg['dummy_mode_configs']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
+        self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.points_nums_avg = self.configs[0]
         self.points_nums_var = self.configs[1]
         self.points_size_avg = self.configs[2]
@@ -243,6 +267,7 @@ class DummyPhone:
         self.background_color_var = self.configs[9]
         self.device_name = device_name
         self.app_names = ['dummy']
+        self.apk_names = ['dummy-apk']
         self.visited_activities = set()
         self.screen = None
         self.background = None
@@ -258,6 +283,9 @@ class DummyPhone:
 
     def close_app(self, app_name: str, reset_maintained_activities: bool = True) -> None:
         self.background = None
+
+    def get_app_all_activities(self, apk_path: str) -> List[str]:
+        return ['activity']
 
     def open_app(self, app_name: str) -> None:
         self.screen = None

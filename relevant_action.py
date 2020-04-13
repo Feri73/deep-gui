@@ -243,11 +243,16 @@ class RelevantActionEnvironment(Environment):
         except Exception:
             return False
 
+    def print_error_level(self, level: int) -> None:
+        print(f'{datetime.now()}: Error level {level} in {self.phone.device_name}.')
+
     def handle_error(self) -> None:
+        self.print_error_level(0)
         if self.checked_open_app():
             return
 
         try:
+            self.print_error_level(1)
             self.restart_phone(False)
             if self.checked_open_app():
                 return
@@ -255,6 +260,7 @@ class RelevantActionEnvironment(Environment):
             pass
 
         try:
+            self.print_error_level(2)
             self.restart_phone(False)
             self.re_set_current_app(self.remove_bad_apps)
             if self.checked_open_app():
@@ -263,17 +269,21 @@ class RelevantActionEnvironment(Environment):
             pass
 
         try:
+            self.print_error_level(3)
             self.restart_phone(True)
             if self.checked_open_app():
                 return
         except Exception:
-            print(f'{datetime.now()}: It seems {self.phone.device_name} is stuck in a bad error.'
-                  f' Creating lock file until manual intervention. Error :\n{traceback.format_exc()}')
-            file_name = f'/.broken_{self.phone.device_name}.lock'
-            open(file_name, 'a').close()
-            while os.path.exists(file_name):
-                time.sleep(10)
-            self.handle_error()
+            pass
+
+        self.print_error_level(4)
+        print(f'{datetime.now()}: It seems {self.phone.device_name} is stuck in a bad error.'
+              f' Creating lock file until manual intervention. Error :\n{traceback.format_exc()}')
+        file_name = f'.broken_{self.phone.device_name}.lock'
+        open(file_name, 'a').close()
+        while os.path.exists(file_name):
+            time.sleep(10)
+        self.handle_error()
 
     def on_error(self):
         super().on_error()
