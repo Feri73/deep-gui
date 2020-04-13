@@ -781,6 +781,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
         self.prediction_overlay_factor = cfg['prediction_overlay_factor']
+        self.cluster_color_size = cfg['cluster_color_size']
         self.dir = cfg['dir']
         self.steps_per_new_file = cfg['steps_per_new_file']
         self.log_preprocessed_screen = cfg['log_preprocessed_screen']
@@ -907,18 +908,20 @@ class CollectorLogger(EnvironmentCallbacks):
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
         pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
+        cluster_colors = cm.Reds(np.linspace(0, 1, len(clustering[2])))[:, :3] * 255
         if clustering is not None or self.prediction_overlay_factor > 0:
             prev_size = pred.shape[:2]
             new_size = self.preprocessed_screen.shape[:2]
             pred = Image.fromarray(np.uint8(pred))
             pred = pred.resize(new_size)
             pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
-            if clustering is not None:
-                draw = ImageDraw.Draw(pred)
-                for cluster in zip(*clustering[:2]):
-                    if cluster[1] in clustering[2]:
-                        draw.text(np.flip(cluster[0][:2] * new_size // prev_size), str(cluster[1]), (0, 0, 0))
             pred = np.array(pred)
+            if clustering is not None:
+                for cluster in zip(*clustering[:2]):
+                    cl_ind = np.where(clustering[2] == cluster[1])[0]
+                    if len(cl_ind) > 0:
+                        y, x = tuple(cluster[0][:2] * new_size // prev_size)
+                        pred[y:y + self.cluster_color_size, x:x + self.cluster_color_size] = cluster_colors[cl_ind[0]]
         self.log_image('Predictions', pred)
 
     def log_image(self, name: str, image: np.ndarray) -> None:
@@ -1086,8 +1089,8 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
     return tf.reduce_mean(tf.reduce_mean(tf.math.reduce_variance(preds, axis=[1, 2]), axis=-1))
 
 
-def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool,
-                 agent_option_probs: List[float]) -> Union[DataCollectionAgent, LearningAgent]:
+def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, agent_option_probs: List[float],
+                 agent_clusterer_cfg_name: Dict) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
@@ -1168,7 +1171,8 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool,
         action = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
     else:
         input = screen_input
-        built_prediction_to_action_options = [prediction_to_action_options[0]()] + prediction_to_action_options[1:]
+        built_prediction_to_action_options = [prediction_to_action_options[0](agent_clusterer_cfg_name)] + \
+                                             prediction_to_action_options[1:]
         action = keras.layers.Lambda(combine_prediction_to_actions(built_prediction_to_action_options,
                                                                    agent_option_probs))(predictions)
 
@@ -1211,9 +1215,9 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool,
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 
 
-def parse_specs_to_probs(specs: Dict, max_len: int) -> List:
-    return sum([[[spec[1][i] if len(spec[1]) > i else (1 - sum(spec[1])) / (max_len - len(spec[1]))
-                  for i in range(max_len)]] * spec[0]
+def parse_specs_to_probs_and_ops(specs: Dict, max_len: int) -> List:
+    return sum([[([spec[1][i] if len(spec[1]) > i else (1 - sum(spec[1])) / (max_len - len(spec[1]))
+                   for i in range(max_len)], *spec[2:])] * spec[0]
                 for spec in specs], [])
 
 
@@ -1232,22 +1236,34 @@ collector_version_start = cfg['collector_configs']['version_start']
 
 coordinator_configs['collector_version_start'] = collector_version_start
 
-prediction_to_action_options = [lambda: PredictionClusterer(clusterer_configs),
-                                better_reward_to_action, worse_reward_to_action, most_certain_reward_to_action,
-                                least_certain_reward_to_action, random_reward_to_action]
-collector_option_probs = parse_specs_to_probs(collectors, len(prediction_to_action_options))
-tester_option_probs = parse_specs_to_probs(testers, len(prediction_to_action_options))
+for clusterer_cfg_name in clusterer_configs:
+    if clusterer_cfg_name == 'default':
+        continue
+    for clusterer_cfg_attr in clusterer_configs['default']:
+        if clusterer_cfg_attr not in clusterer_configs[clusterer_cfg_name]:
+            clusterer_configs[clusterer_cfg_name][clusterer_cfg_attr] = \
+                clusterer_configs['default'][clusterer_cfg_attr]
+
+prediction_to_action_options = [
+    lambda cfg_name: PredictionClusterer(clusterer_configs[cfg_name if cfg_name is not None else 'default']),
+    better_reward_to_action, worse_reward_to_action, most_certain_reward_to_action,
+    least_certain_reward_to_action, random_reward_to_action]
+collector_option_probs_and_ops = parse_specs_to_probs_and_ops(collectors, len(prediction_to_action_options))
+tester_option_probs_and_ops = parse_specs_to_probs_and_ops(testers, len(prediction_to_action_options))
 
 tf.disable_v2_behavior()
 os.environ["KMP_AFFINITY"] = "verbose"
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
-    collector_creators = [partial(create_agent, i, i, False, False, probs)
-                          for i, probs in enumerate(collector_option_probs)]
-    tester_creators = [partial(create_agent, i, i + len(collector_creators), False, True, probs)
-                       for i, probs in enumerate(tester_option_probs)]
-    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),), True, False, None)
+    collector_creators = [partial(create_agent, i, i, False, False, probs_and_ops[0],
+                                  probs_and_ops[1] if len(probs_and_ops) > 1 else None)
+                          for i, probs_and_ops in enumerate(collector_option_probs_and_ops)]
+    tester_creators = [partial(create_agent, i, i + len(collector_creators), False, True, probs_and_ops[0],
+                               probs_and_ops[1] if len(probs_and_ops) > 1 else None)
+                       for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
+    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),),
+                              True, False, None, None)
     coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 
