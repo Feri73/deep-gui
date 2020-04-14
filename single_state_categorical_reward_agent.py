@@ -17,7 +17,7 @@ import scipy.misc
 import tensorflow as tf
 import tensorflow.keras as keras
 import yaml
-from PIL import Image, ImageDraw
+from PIL import Image
 from sklearn.cluster import AgglomerativeClustering
 
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
@@ -341,8 +341,8 @@ class LearningAgent:
             data = generator()
             steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
             checkpoint_callback = keras.callbacks.ModelCheckpoint(
-                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' + '{epoch:02d}-{loss:.2f}',
-                monitor='loss', save_best_only=False, save_weights_only=True,
+                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' +
+                '{epoch:02d}-{loss:.2f}.hdf5', monitor='loss', save_best_only=False, save_weights_only=True,
                 save_freq=int(self.save_frequency * steps_per_epoch * self.batch_size))
             self.model.fit(data, epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
                            callbacks=[checkpoint_callback])
@@ -383,6 +383,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
         self.train = cfg['train']
         self.pre_training = cfg['pre_training']
         self.collect_before_pre_training = cfg['collect_before_pre_training']
+        self.sync_weight = cfg['sync_weight']
 
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
@@ -431,12 +432,20 @@ class Coordinator(ABC, EnvironmentCallbacks):
             locals.collector.update_weights(locals.new_weight)
             locals.new_weight = None
 
-    def sync_weights(self) -> None:
-        print(f'{datetime.now()}: sending weights to workers.')
+    def send_to_workers(self, func: Callable, *args) -> None:
         for collector_thread in self.collector_threads:
-            collector_thread.add_to_run_queue(Coordinator.local_set_new_weight, self.learner.get_weights())
+            collector_thread.add_to_run_queue(func, *args)
         for tester_thread in self.tester_threads:
-            tester_thread.add_to_run_queue(Coordinator.local_set_new_weight, self.learner.get_weights())
+            tester_thread.add_to_run_queue(func, *args)
+
+    def sync_weights(self):
+        if not self.sync_weight:
+            return
+        print(f'{datetime.now()}: sending weights to workers.')
+        self.send_to_workers(Coordinator.local_set_new_weight, self.learner.get_weights())
+
+    def dummy(self):
+        return
 
     def record_collector_file_completion(self, version: int) -> None:
         self.file_completions[version].append(True)
@@ -458,7 +467,11 @@ class Coordinator(ABC, EnvironmentCallbacks):
         self.learner = self.learner_creator()
         if self.pre_training:
             self.learner.learn(list(range(self.collector_version_start)))
-        self.sync_weights()
+        if self.sync_weight:
+            self.sync_weights()
+        else:
+            print(f'{datetime.now()}: sending dummy to workers.')
+            self.send_to_workers(Coordinator.dummy)
         while True:
             self.learner_thread.pop_and_run_next(self)
             time.sleep(1)
@@ -908,7 +921,6 @@ class CollectorLogger(EnvironmentCallbacks):
         if pred.shape[-1] > 1:
             raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
         pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
-        cluster_colors = cm.Reds(np.linspace(0, 1, len(clustering[2])))[:, :3] * 255
         if clustering is not None or self.prediction_overlay_factor > 0:
             prev_size = pred.shape[:2]
             new_size = self.preprocessed_screen.shape[:2]
@@ -917,6 +929,7 @@ class CollectorLogger(EnvironmentCallbacks):
             pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
             pred = np.array(pred)
             if clustering is not None:
+                cluster_colors = cm.Reds(np.linspace(0, 1, len(clustering[2])))[:, :3] * 255
                 for cluster in zip(*clustering[:2]):
                     cl_ind = np.where(clustering[2] == cluster[1])[0]
                     if len(cl_ind) > 0:
@@ -1090,7 +1103,7 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
 
 
 def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, agent_option_probs: List[float],
-                 agent_clusterer_cfg_name: Dict) -> Union[DataCollectionAgent, LearningAgent]:
+                 agent_clusterer_cfg_name: str, weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
@@ -1100,7 +1113,6 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
     dummy_mode = cfg['dummy_mode']
     data_file_dir = cfg['data_file_dir']
     logs_dir = cfg['logs_dir']
-    weights_file = cfg['weights_file']
     collectors_apks_path = cfg['collectors_apks_path']
     testers_apks_path = cfg['testers_apks_path']
     collectors_clone_script = cfg['collectors_clone_script']
@@ -1147,11 +1159,12 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
     example_episode = Episode(np.zeros((*screen_shape, 3), np.uint8), np.zeros(3, np.int32),
                               np.zeros((), np.bool), np.zeros((*screen_shape, 3), np.uint8))
 
-    screen_input = keras.layers.Input(example_episode.state.shape, batch_size,
-                                      name='state', dtype=example_episode.state.dtype)
+    screen_input = keras.layers.Input(example_episode.state.shape, batch_size, name='state',
+                                      dtype=example_episode.state.dtype)
 
-    screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs)
-    reward_predictor = eval(reward_predictor[0])(action_type_count, 2, reward_predictor_configs)
+    screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs, name='screen_preprocessor')
+    reward_predictor = eval(reward_predictor[0])(action_type_count, 2, reward_predictor_configs,
+                                                 name='reward_predictor')
 
     predictions = reward_predictor(screen_preprocessor(screen_input))
 
@@ -1165,16 +1178,18 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
             coeffs.append(1)
         if len(regs) > 0:
             reward_predictor.activity_regularizer = linear_combination(regs, coeffs)
-        action_input = keras.layers.Input(example_episode.action.shape, batch_size,
-                                          name='action', dtype=example_episode.action.dtype)
+        action_input = keras.layers.Input(example_episode.action.shape, batch_size, name='action',
+                                          dtype=example_episode.action.dtype)
         input = (screen_input, action_input)
-        action = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]))((predictions, action_input))
+        action = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]),
+                                     name='action_sampler')((predictions, action_input))
     else:
         input = screen_input
         built_prediction_to_action_options = [prediction_to_action_options[0](agent_clusterer_cfg_name)] + \
                                              prediction_to_action_options[1:]
-        action = keras.layers.Lambda(combine_prediction_to_actions(built_prediction_to_action_options,
-                                                                   agent_option_probs))(predictions)
+        action = keras.layers.Lambda(
+            combine_prediction_to_actions(built_prediction_to_action_options, agent_option_probs),
+            name='action_predictor')(predictions)
 
         logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
                                  screen_preprocessor.output, reward_predictor.output,
@@ -1184,13 +1199,14 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
                                                               screen_preprocessor_crop_size_a, np.array([0, 0])),
                                  collector_logger_configs)
 
-        action = keras.layers.Lambda(control_dependencies)((action, logger.get_dependencies()))
+        action = keras.layers.Lambda(control_dependencies,
+                                     name='log_dependency_controller')((action, logger.get_dependencies()))
 
     model = keras.Model(inputs=input, outputs=action)
 
+    if weights_file is not None:
+        model.load_weights(weights_file, by_name=True)
     if is_learner:
-        if weights_file is not None:
-            model.load_weights(weights_file)
         model.compile(optimizer, keras.losses.BinaryCrossentropy())
 
     phone_type = DummyPhone if dummy_mode else Phone
@@ -1232,6 +1248,7 @@ reset_logs = cfg['reset_logs']
 coordinator_configs = cfg['coordinator_configs']
 clusterer_configs = cfg['clusterer_configs']
 logs_dir = cfg['logs_dir']
+weights_file = cfg['weights_file']
 collector_version_start = cfg['collector_configs']['version_start']
 
 coordinator_configs['collector_version_start'] = collector_version_start
@@ -1257,13 +1274,15 @@ os.environ["KMP_AFFINITY"] = "verbose"
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
     collector_creators = [partial(create_agent, i, i, False, False, probs_and_ops[0],
-                                  probs_and_ops[1] if len(probs_and_ops) > 1 else None)
+                                  probs_and_ops[1] if len(probs_and_ops) > 1 else None,
+                                  weights_file[probs_and_ops[2]] if len(probs_and_ops) > 2 else None)
                           for i, probs_and_ops in enumerate(collector_option_probs_and_ops)]
     tester_creators = [partial(create_agent, i, i + len(collector_creators), False, True, probs_and_ops[0],
-                               probs_and_ops[1] if len(probs_and_ops) > 1 else None)
+                               probs_and_ops[1] if len(probs_and_ops) > 1 else None,
+                               weights_file[probs_and_ops[2]] if len(probs_and_ops) > 2 else None)
                        for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
     learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),),
-                              True, False, None, None)
+                              True, False, None, None, weights_file['learner'])
     coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 
