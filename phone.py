@@ -268,7 +268,7 @@ class DummyPhone:
         self.device_name = device_name
         self.app_names = ['dummy']
         self.apk_names = ['dummy-apk']
-        self.visited_activities = set()
+        self.visited_activities = {'dummy.activity'}
         self.screen = None
         self.background = None
 
@@ -285,7 +285,7 @@ class DummyPhone:
         self.background = None
 
     def get_app_all_activities(self, apk_path: str) -> List[str]:
-        return ['activity']
+        return ['dummy.activity']
 
     def open_app(self, app_name: str) -> None:
         self.screen = None

@@ -799,6 +799,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.steps_per_new_file = cfg['steps_per_new_file']
         self.log_preprocessed_screen = cfg['log_preprocessed_screen']
         self.log_reward_prediction = cfg['log_reward_prediction']
+        self.log_max_activities = cfg['log_max_activities']
         self.environment = None
 
         self.name = name
@@ -818,6 +819,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.summary = tf.Summary()
         self.current_apk = None
         self.current_apk_max_activities = None
+        self.current_activity_prefix = None
 
         preds_clusterer.add_callback(self.on_new_clustering)
         self.dependencies = [BufferLogger(self.image_log_frequency,
@@ -853,6 +855,10 @@ class CollectorLogger(EnvironmentCallbacks):
         self.rewards.append(np.array(reward))
         valid_visited_activities = {x for x in self.environment.phone.visited_activities
                                     if x.startswith(self.environment.get_current_app())}
+        if len(valid_visited_activities) > 0:
+            self.current_activity_prefix = '.'.join(list(valid_visited_activities)[0].split('/')[0].split('.')[0:2])
+        else:
+            self.current_activity_prefix = None
         self.activity_count.append(np.array(len(valid_visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
             self.log_scalar('Metrics/Reward', self.rewards)
@@ -876,12 +882,18 @@ class CollectorLogger(EnvironmentCallbacks):
         self.clustering = None
 
     def add_max_activity_summary(self, recalculate: bool) -> None:
+        if self.current_activity_prefix is None:
+            self.max_activity_count_summary_writer = None
+            self.current_apk = None
+            return
         summary = tf.Summary()
         if recalculate:
+            self.max_activity_count_summary_writer = tf.summary.FileWriter(
+                f'{self.summary_writer.get_logdir()}_{self.environment.get_current_app()}_activity_count')
             self.current_apk = self.environment.get_current_app(apk=True)
             self.current_apk_max_activities = len([
                 ac for ac in self.environment.phone.get_app_all_activities(self.current_apk)
-                if ac.startswith(self.environment.get_current_app())])
+                if ac.startswith(self.current_activity_prefix)])
         summary.value.add(tag="Metrics/Activity Count", simple_value=self.current_apk_max_activities)
         self.max_activity_count_summary_writer.add_summary(summary, self.local_step - int(not recalculate))
 
@@ -890,12 +902,10 @@ class CollectorLogger(EnvironmentCallbacks):
             chunk = self.local_step // self.steps_per_new_file
             print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
-        if self.environment.phone.maintain_visited_activities and \
+        if self.environment.phone.maintain_visited_activities and self.log_max_activities and \
                 self.environment.get_current_app(apk=True) != self.current_apk:
             if self.max_activity_count_summary_writer is not None:
                 self.add_max_activity_summary(False)
-            self.max_activity_count_summary_writer = tf.summary.FileWriter(
-                f'{self.summary_writer.get_logdir()}_{self.environment.get_current_app()}_activity_count')
             self.add_max_activity_summary(True)
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
@@ -1102,8 +1112,9 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
     return tf.reduce_mean(tf.reduce_mean(tf.math.reduce_variance(preds, axis=[1, 2]), axis=-1))
 
 
-def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, agent_option_probs: List[float],
-                 agent_clusterer_cfg_name: str, weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
+def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_tester: bool,
+                 log_max_activities: bool, agent_option_probs: List[float], agent_clusterer_cfg_name: str,
+                 weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
@@ -1145,6 +1156,7 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
+    collector_logger_configs['log_max_activities'] = log_max_activities
     reward_predictor_configs['prediction_shape'] = prediction_shape
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
@@ -1191,7 +1203,7 @@ def create_agent(id: int, agent_num: int, is_learner: bool, is_tester: bool, age
             combine_prediction_to_actions(built_prediction_to_action_options, agent_option_probs),
             name='action_predictor')(predictions)
 
-        logger = CollectorLogger(f'{"tester" if is_tester else "collector"}_{id}',
+        logger = CollectorLogger(f'{agent_name}_{"tester" if is_tester else "collector"}{id}',
                                  screen_preprocessor.output, reward_predictor.output,
                                  built_prediction_to_action_options[0], action_pos_to_screen_pos,
                                  lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
@@ -1250,6 +1262,7 @@ clusterer_configs = cfg['clusterer_configs']
 logs_dir = cfg['logs_dir']
 weights_file = cfg['weights_file']
 collector_version_start = cfg['collector_configs']['version_start']
+shuffle_apps = cfg['environment_configs']['shuffle_apps']
 
 coordinator_configs['collector_version_start'] = collector_version_start
 
@@ -1273,16 +1286,19 @@ os.environ["KMP_AFFINITY"] = "verbose"
 
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
-    collector_creators = [partial(create_agent, i, i, False, False, probs_and_ops[0],
-                                  probs_and_ops[1] if len(probs_and_ops) > 1 else None,
-                                  weights_file[probs_and_ops[2]] if len(probs_and_ops) > 2 else None)
+    collector_creators = [partial(create_agent, i, i, probs_and_ops[1] if len(probs_and_ops) > 1 else '',
+                                  False, False, shuffle_apps or i == 0, probs_and_ops[0],
+                                  probs_and_ops[2] if len(probs_and_ops) > 2 else None,
+                                  weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
                           for i, probs_and_ops in enumerate(collector_option_probs_and_ops)]
-    tester_creators = [partial(create_agent, i, i + len(collector_creators), False, True, probs_and_ops[0],
-                               probs_and_ops[1] if len(probs_and_ops) > 1 else None,
-                               weights_file[probs_and_ops[2]] if len(probs_and_ops) > 2 else None)
+    tester_creators = [partial(create_agent, i, i + len(collector_creators),
+                               probs_and_ops[1] if len(probs_and_ops) > 1 else '', False, True,
+                               shuffle_apps or i == 0, probs_and_ops[0],
+                               probs_and_ops[2] if len(probs_and_ops) > 2 else None,
+                               weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
                        for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
-    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),),
-                              True, False, None, None, weights_file['learner'])
+    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),), 'learner',
+                              True, False, False, None, None, weights_file['learner'])
     coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 
