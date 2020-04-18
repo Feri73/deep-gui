@@ -819,7 +819,6 @@ class CollectorLogger(EnvironmentCallbacks):
         self.summary = tf.Summary()
         self.current_apk = None
         self.current_apk_max_activities = None
-        self.current_activity_prefix = None
 
         preds_clusterer.add_callback(self.on_new_clustering)
         self.dependencies = [BufferLogger(self.image_log_frequency,
@@ -855,10 +854,6 @@ class CollectorLogger(EnvironmentCallbacks):
         self.rewards.append(np.array(reward))
         valid_visited_activities = {x for x in self.environment.phone.visited_activities
                                     if x.startswith(self.environment.get_current_app())}
-        if len(valid_visited_activities) > 0:
-            self.current_activity_prefix = '.'.join(list(valid_visited_activities)[0].split('/')[0].split('.')[0:2])
-        else:
-            self.current_activity_prefix = None
         self.activity_count.append(np.array(len(valid_visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
             self.log_scalar('Metrics/Reward', self.rewards)
@@ -882,18 +877,12 @@ class CollectorLogger(EnvironmentCallbacks):
         self.clustering = None
 
     def add_max_activity_summary(self, recalculate: bool) -> None:
-        if self.current_activity_prefix is None:
-            self.max_activity_count_summary_writer = None
-            self.current_apk = None
-            return
         summary = tf.Summary()
         if recalculate:
             self.max_activity_count_summary_writer = tf.summary.FileWriter(
                 f'{self.summary_writer.get_logdir()}_{self.environment.get_current_app()}_activity_count')
             self.current_apk = self.environment.get_current_app(apk=True)
-            self.current_apk_max_activities = len([
-                ac for ac in self.environment.phone.get_app_all_activities(self.current_apk)
-                if ac.startswith(self.current_activity_prefix)])
+            self.current_apk_max_activities = len(self.environment.phone.get_app_all_activities(self.current_apk))
         summary.value.add(tag="Metrics/Activity Count", simple_value=self.current_apk_max_activities)
         self.max_activity_count_summary_writer.add_summary(summary, self.local_step - int(not recalculate))
 

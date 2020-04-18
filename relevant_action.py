@@ -221,10 +221,7 @@ class RelevantActionEnvironment(Environment):
             self.phone.apk_names.remove(self.get_current_app(apk=True))
         else:
             print(f'reinstalling it to phone #{self.phone.device_name}')
-            try:
-                self.phone.install_apk(self.get_current_app(apk=True))
-            except Exception:
-                self.re_set_current_app(True)
+            self.phone.install_apk(self.get_current_app(apk=True))
 
     def restart_phone(self, recreate_phone: bool) -> None:
         try:
