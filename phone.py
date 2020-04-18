@@ -139,7 +139,7 @@ class Phone:
     def start_emulator(self, fresh: bool = False) -> None:
         print(f'{datetime.now()}: starting emulator {self.device_name}. fresh={fresh}')
         run_parallel_command(f'{self.emulator_path} -avd {self.device_name} -ports {self.port},{self.port + 1}' +
-                             (f' -no-cache' if fresh else ''))
+                             (f' -no-snapshot-load' if fresh else ''))
         self.wait_for_start()
 
     def install_apk(self, apk_name: str) -> None:
