@@ -44,7 +44,6 @@ class Phone:
             os.makedirs(f'.tmp-{device_name}')
         self.step = 0
         self.visited_activities = set()
-        self.app_in_stack = None
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
@@ -73,11 +72,11 @@ class Phone:
             top_stack_id = matches[0][1]
             for match in matches:
                 if match[0] == app_name and match[1] == top_stack_id:
-                    self.app_in_stack = app_name
+                    app_in_stack = app_name
             if force_front:
                 return matches[0][0] == app_name
             else:
-                return self.app_in_stack == app_name
+                return app_in_stack == app_name
         except Exception:
             pass
         return False
@@ -219,12 +218,13 @@ class Phone:
         print(f'{datetime.now()}: opening {app_name} in {self.device_name}')
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
+        wait = not self.is_in_app(app_name, False)
         self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
         # this is not the best way i can do it, cuz it needs to make sure i call is_in_app every time i call this
-        if self.app_in_stack == app_name:
-            print(f'{datetime.now()}: not waiting because the app was already in the stack in #{self.device_name}')
-        else:
+        if wait:
             time.sleep(self.app_start_wait_time)
+        else:
+            print(f'{datetime.now()}: not waiting because the app was already in the stack in #{self.device_name}')
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.maintain_visited_activities and perform_checks:
