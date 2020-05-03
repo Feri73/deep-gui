@@ -369,7 +369,6 @@ class Thread(ABC):
         pass
 
     # this can only be accessed from the thread associated to this object
-    # this method should have a wait input (remember to change the MultiprocessThread implementation if change this)
     @abstractmethod
     def pop_and_run_next(self, *local_args, wait=False) -> None:
         pass
@@ -793,6 +792,7 @@ class CollectorLogger(EnvironmentCallbacks):
                  to_preprocessed_coord: Callable, cfg: Config):
         self.scalar_log_frequency = cfg['scalar_log_frequency']
         self.image_log_frequency = cfg['image_log_frequency']
+        self.coverage_log_frequency = cfg['coverage_log_frequency']
         self.prediction_overlay_factor = cfg['prediction_overlay_factor']
         self.cluster_color_size = cfg['cluster_color_size']
         self.dir = cfg['dir']
@@ -801,6 +801,8 @@ class CollectorLogger(EnvironmentCallbacks):
         self.log_reward_prediction = cfg['log_reward_prediction']
         self.log_max_activities = cfg['log_max_activities']
         self.environment = None
+
+        assert self.coverage_log_frequency % self.scalar_log_frequency == 0
 
         self.name = name
         self.action_for_screen = action_for_screen
@@ -859,6 +861,9 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_scalar('Metrics/Reward', self.rewards)
             if self.environment.phone.maintain_visited_activities:
                 self.log_scalar('Metrics/Activity Count', self.activity_count)
+            if self.local_step % self.coverage_log_frequency == 0:
+                coverage = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True))
+                self.log_scalar('Metrics/Line Coverage', [np.nan if coverage is None else coverage])
             for name in self.scalars:
                 self.log_scalar(name, self.scalars[name])
             self.rewards = []
@@ -872,6 +877,8 @@ class CollectorLogger(EnvironmentCallbacks):
                 self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
             if self.log_reward_prediction:
                 self.log_predictions(self.prediction, self.clustering)
+        if self.local_step == 1:
+            self.log_scalar('Metrics/Line Coverage', [0.0])
         self.action = None
         self.preprocessed_screen = None
         self.clustering = None
@@ -939,7 +946,7 @@ class CollectorLogger(EnvironmentCallbacks):
     def log_image(self, name: str, image: np.ndarray) -> None:
         self.summary.value.add(tag=name, image=get_image_summary(image))
 
-    def log_scalar(self, name: str, values: List[np.ndarray]) -> None:
+    def log_scalar(self, name: str, values: List[Union[np.ndarray, int, float]]) -> None:
         self.summary.value.add(tag=name, simple_value=np.mean(values))
 
 
@@ -959,19 +966,25 @@ def index_to_action(index: tf.Tensor, preds: tf.Tensor) -> tf.Tensor:
     return tf.concat([[y], [x], [type]], axis=-1)
 
 
-def most_probable_weighted_policy_user(probs: tf.Tensor) -> tf.Tensor:
-    return tf.argmax(tf.distributions.Multinomial(1.0, probs=probs).sample(), axis=-1)
+def linear_normalizer(logits: tf.Tensor, axis=None) -> tf.Tensor:
+    return logits / (tf.reduce_sum(logits, axis=axis) + keras.backend.epsilon())
+
+
+def most_probable_weighted_policy_user(logits: tf.Tensor) -> tf.Tensor:
+    if prediction_normalizer is None:
+        return tf.argmax(tf.distributions.Multinomial(1.0, logits=logits).sample(), axis=-1)
+    return tf.argmax(tf.distributions.Multinomial(1.0, probs=prediction_normalizer(logits, axis=-1)).sample(), axis=-1)
 
 
 def better_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    return index_to_action(most_probable_weighted_policy_user(tf.nn.softmax(preds_f)), preds)
+    return index_to_action(most_probable_weighted_policy_user(preds_f), preds)
 
 
 def worse_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
     return index_to_action(
-        most_probable_weighted_policy_user(tf.nn.softmax(neg_reward + pos_reward - preds_f)), preds)
+        most_probable_weighted_policy_user(neg_reward + pos_reward - preds_f), preds)
 
 
 def least_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
@@ -979,14 +992,14 @@ def least_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     mid_reward = (pos_reward + neg_reward) / 2
     dist = pos_reward - mid_reward
     return index_to_action(
-        most_probable_weighted_policy_user(tf.nn.softmax(dist - tf.abs(mid_reward - preds_f))), preds)
+        most_probable_weighted_policy_user(dist - tf.abs(mid_reward - preds_f)), preds)
 
 
 def most_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
     mid_reward = (pos_reward + neg_reward) / 2
     return index_to_action(
-        most_probable_weighted_policy_user(tf.nn.softmax(tf.abs(mid_reward - preds_f))), preds)
+        most_probable_weighted_policy_user(tf.abs(mid_reward - preds_f)), preds)
 
 
 def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
@@ -1036,8 +1049,7 @@ class PredictionClusterer:
                 return random_reward_to_action(preds_old)
             chosen_cluster_num = np.random.choice(valid_clusters_nums, 1)
             chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster_num)
-            chosen_clickable_i = most_probable_weighted_policy_user(
-                tf.nn.softmax(tf.gather_nd(preds, chosen_clickables)))
+            chosen_clickable_i = most_probable_weighted_policy_user(tf.gather_nd(preds, chosen_clickables))
             chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
             for callback in self.callbacks:
                 callback(clickables, clusters, valid_clusters_nums)
@@ -1250,10 +1262,13 @@ coordinator_configs = cfg['coordinator_configs']
 clusterer_configs = cfg['clusterer_configs']
 logs_dir = cfg['logs_dir']
 weights_file = cfg['weights_file']
+prediction_normalizer_name = cfg['prediction_normalizer']
 collector_version_start = cfg['collector_configs']['version_start']
 shuffle_apps = cfg['environment_configs']['shuffle_apps']
 
 coordinator_configs['collector_version_start'] = collector_version_start
+
+prediction_normalizer = None if prediction_normalizer_name is None else eval(prediction_normalizer_name)
 
 for clusterer_cfg_name in clusterer_configs:
     if clusterer_cfg_name == 'default':

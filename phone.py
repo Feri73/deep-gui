@@ -32,6 +32,7 @@ class Phone:
         apks_path = cfg['apks_path']
         self.aapt_path = cfg['aapt_path']
         self.clone_script_path = cfg['clone_script_path']
+        self.emma_jar_path = cfg['emma_jar_path']
         self.install_apks = cfg['install_apks']
         self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.app_activity_dict = {}
@@ -52,7 +53,44 @@ class Phone:
             return res.decode('utf-8')
         return res
 
-    def maintain_current_activity(self):
+    def update_code_coverage(self, apk_name: str) -> Optional[float]:
+        try:
+            self.adb('shell am broadcast -a edu.gatech.m3.emma.COLLECT_COVERAGE')
+            coverage_path = os.path.abspath(f'.cov_tmp-{self.device_name}.ec')
+            self.adb(f'pull /mnt/sdcard/coverage.ec "{coverage_path}"')
+            while not os.path.isfile(f'{coverage_path}'):
+                continue
+            self.adb(f'shell rm /mnt/sdcard/coverage.ec')
+            command = f'java -cp "{self.emma_jar_path}" emma report -r txt --in "{apk_name}.em" -in "{coverage_path}"' \
+                      f' -Dreport.txt.out.file="{coverage_path}.txt"'
+            subprocess.check_output(command, shell=True)
+            cov_sum = 0
+            all_sum = 0
+            with open(f'{coverage_path}.txt', 'r') as report_file:
+                lines = report_file.readlines()
+                in_table = False
+                for line_a in lines:
+                    line = line_a[:-1] if line_a[-1] == '\n' else line_a
+                    if line == 'COVERAGE BREAKDOWN BY PACKAGE:':
+                        in_table = True
+                        continue
+                    elif not in_table or len(line) < 3 or line[0] == '[' or line[0] == '-':
+                        continue
+                    ln, nm = tuple(line.split('\t')[-2:])
+                    if nm.endswith('EmmaInstrument'):
+                        continue
+                    cov, all = tuple(ln.split('(')[1].split(')')[0].split('/'))
+                    cov_sum += float(cov)
+                    all_sum += float(all)
+            os.remove(coverage_path)
+            os.remove(f'{coverage_path}.txt')
+            return cov_sum / all_sum
+        except Exception as ex:
+            print(f'{datetime.now()}: '
+                  f'exception happened while maintaining code coverage in {self.device_name} -> {ex}')
+            return None
+
+    def maintain_current_activity(self) -> None:
         try:
             tmp = self.adb('shell "dumpsys activity activities | grep mResumedActivity"').strip()
             match = re.match('.*ActivityRecord{.+ .+ (.+) .+}.*', tmp)
@@ -293,6 +331,9 @@ class DummyPhone:
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
+
+    def update_code_coverage(self, apk_name: str) -> float:
+        return 0.0
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.screen is None:
