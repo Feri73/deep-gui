@@ -33,6 +33,14 @@ class Phone:
         self.aapt_path = cfg['aapt_path']
         self.clone_script_path = cfg['clone_script_path']
         self.emma_jar_path = cfg['emma_jar_path']
+        self.grep_command = cfg['grep_command']
+        self.timeout_template = cfg['timeout_template']
+        self.apk_install_command = cfg['apk_install_command']
+        self.app_stop_command = cfg['app_stop_command']
+        self.current_activity_grep = cfg['current_activity_grep']
+        self.current_activity_regex = cfg['current_activity_regex']
+        self.is_in_app_grep = cfg['is_in_app_grep']
+        self.is_in_app_regex = cfg['is_in_app_regex']
         self.install_apks = cfg['install_apks']
         self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.app_activity_dict = {}
@@ -90,31 +98,30 @@ class Phone:
                   f'exception happened while maintaining code coverage in {self.device_name} -> {ex}')
             return None
 
+    def add_grep(self, command: str, filter: str) -> str:
+        return command + ('' if filter is None else f' | {self.grep_command} {filter}')
+
     def maintain_current_activity(self) -> None:
         try:
-            tmp = self.adb('shell "dumpsys activity activities | grep mResumedActivity"').strip()
-            match = re.match('.*ActivityRecord{.+ .+ (.+) .+}.*', tmp)
-            print(f'{datetime.now()}: activity {match[1]} is visited in {self.device_name}')
-            self.visited_activities.add(match[1])
+            shell_cmd = self.add_grep('dumpsys activity activities', self.current_activity_grep)
+            tmp = self.adb(f'shell "{shell_cmd}"').strip()
+            match = re.findall(self.current_activity_regex, tmp)
+            print(f'{datetime.now()}: activity {match[0]} is visited in {self.device_name}')
+            self.visited_activities.add(match[0])
         except Exception as ex:
             print(f'{datetime.now()}: '
                   f'exception happened while maintaining current activity in {self.device_name} -> {ex}')
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
+        if not force_front:
+            raise NotImplementedError('not supporting force_front=False at this time.')
         try:
             # add timeout here
-            res = self.adb('shell "dumpsys activity | grep TaskRecord"')
-            matches = re.findall(r'.*\* Recent .+: TaskRecord{.+#\d+ .+=(.+) .+StackId=(\d+).*}', res)
-            print(f'{datetime.now()}: top app of {self.device_name}: {matches[0][0]}')
-            # test for when force_front = False
-            top_stack_id = matches[0][1]
-            for match in matches:
-                if match[0] == app_name and match[1] == top_stack_id:
-                    app_in_stack = app_name
-            if force_front:
-                return matches[0][0] == app_name
-            else:
-                return app_in_stack == app_name
+            shell_cmd = self.add_grep('dumpsys activity', self.is_in_app_grep)
+            res = self.adb(f'shell "{shell_cmd}"')
+            matches = re.findall(self.is_in_app_regex, res)
+            print(f'{datetime.now()}: top app of {self.device_name}: {matches[0]}')
+            return matches[0] == app_name
         except Exception:
             pass
         return False
@@ -123,7 +130,8 @@ class Phone:
         print(f'{datetime.now()}: checking boot status of {self.device_name}: ', end='')
         try:
             # this 2s should be param probably
-            res = self.adb('shell timeout 2s getprop sys.boot_completed') == ('1\r\n' if os.name == 'nt' else '1\n')
+            timeout_cmd = self.timeout_template.replace('{}', '2')
+            res = self.adb(f'shell {timeout_cmd} getprop sys.boot_completed').strip() == '1'
         except subprocess.CalledProcessError:
             res = False
         print(f'{res}')
@@ -180,7 +188,7 @@ class Phone:
         self.wait_for_start()
 
     def install_apk(self, apk_name: str) -> None:
-        self.adb(f'install -r -g "{os.path.abspath(apk_name)}"')
+        self.adb(f'{self.apk_install_command} "{os.path.abspath(apk_name)}"')
 
     def initial_setups(self) -> None:
         # now that I've updated adb see if i can use this again
@@ -227,13 +235,15 @@ class Phone:
     def close_app(self, app_name: str, reset_maintained_activities: bool = True) -> None:
         print(f'{datetime.now()}: closing {app_name} in {self.device_name}')
         # self.adb(f'shell su root pm clear {app_name}')
-        self.adb(f'shell am force-stop {app_name}')
+        stop_cmd = self.app_stop_command.replace('{}', app_name)
+        self.adb(f'shell {stop_cmd}')
         time.sleep(self.app_exit_wait_time)
         if reset_maintained_activities:
             self.visited_activities = set()
 
     def add_app_activity(self, app_name: str) -> None:
-        dat = self.adb(f'shell dumpsys package {app_name} | grep -A1 "android.intent.action.MAIN:"')
+        cmd = self.add_grep(f'dumpsys package {app_name}', '-A1 ""android.intent.action.MAIN:""')
+        dat = self.adb(f'shell "{cmd}"')
         lines = dat.splitlines()
         activityRE = re.compile('([A-Za-z0-9_.]+/[A-Za-z0-9_.]+)')
         self.app_activity_dict[app_name] = activityRE.search(lines[1]).group(1)
