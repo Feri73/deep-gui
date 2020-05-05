@@ -117,7 +117,7 @@ class Phone:
             raise NotImplementedError('not supporting force_front=False at this time.')
         try:
             # add timeout here
-            shell_cmd = self.add_grep('dumpsys activity', self.is_in_app_grep)
+            shell_cmd = self.add_grep('dumpsys activity activities', self.is_in_app_grep)
             res = self.adb(f'shell "{shell_cmd}"')
             matches = re.findall(self.is_in_app_regex, res)
             print(f'{datetime.now()}: top app of {self.device_name}: {matches[0]}')
@@ -319,6 +319,9 @@ class DummyPhone:
         pass
 
     def start_phone(self, fresh: bool = False) -> None:
+        pass
+
+    def recreate_emulator(self) -> None:
         pass
 
     def install_apk(self, apk_name: str) -> None:
