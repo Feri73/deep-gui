@@ -53,7 +53,8 @@ class RelevantActionEnvironment(Environment):
         self.animation_mask = None
         self.changed_from_last = True
 
-        self.phone.start_phone(fresh=self.start_phone_fresh)
+        if not self.recreate_on_app:
+            self.phone.start_phone(fresh=self.start_phone_fresh)
 
         if shuffle_apps:
             # better way for doing this
@@ -83,7 +84,7 @@ class RelevantActionEnvironment(Environment):
         self.finished = False
         if self.step % self.steps_per_app_reopen == 0 or self.step % self.steps_per_app == 0:
             try:
-                if self.recreate_on_app and self.step % self.steps_per_app == 0 and self.step != 0:
+                if self.recreate_on_app and self.step % self.steps_per_app == 0:
                     self.phone.restart(recreate_phone=True)
                     self.phone.install_apk(self.get_current_app(apk=True))
                 else:
