@@ -164,7 +164,7 @@ class Phone:
         local_snapshot_path = f'{self.avd_path}/{self.device_name}.avd/snapshots/fresh'
         self.start_emulator(fresh)
         if self.unlock:
-            self.adb('shell keyevent 82')
+            self.adb('shell input keyevent 82')
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
         #         copy_tree(ref_snapshot_path, local_snapshot_path)
