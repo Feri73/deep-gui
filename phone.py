@@ -43,6 +43,7 @@ class Phone:
         self.is_in_app_regex = cfg['is_in_app_regex']
         self.install_apks = cfg['install_apks']
         self.maintain_visited_activities = cfg['maintain_visited_activities']
+        self.unlock = cfg['unlock']
         self.app_activity_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
@@ -162,6 +163,8 @@ class Phone:
         # ref_snapshot_path = f'{self.avd_path}/snapshots/fresh'
         local_snapshot_path = f'{self.avd_path}/{self.device_name}.avd/snapshots/fresh'
         self.start_emulator(fresh)
+        if self.unlock:
+            self.adb('shell keyevent 82')
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
         #         copy_tree(ref_snapshot_path, local_snapshot_path)
@@ -274,10 +277,10 @@ class Phone:
             self.maintain_current_activity()
         self.step += 1
         screenshot_dir = os.path.abspath(f'.tmp-{self.device_name}')
+        shutil.rmtree(screenshot_dir)
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
         image_path = glob.glob(f'.tmp-{self.device_name}/Screenshot*.png')[0]
         res = mpimg.imread(image_path)[:, :, :-1]
-        os.remove(image_path)
         return (res * 255).astype(np.uint8)
 
     def send_event(self, x: int, y: int, type: int) -> np.ndarray:
