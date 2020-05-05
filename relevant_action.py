@@ -19,6 +19,7 @@ class RelevantActionEnvironment(Environment):
         self.phone = phone
         self.action2pos = action2pos
 
+        self.recreate_on_app = cfg['recreate_on_app']
         self.steps_per_app = cfg['steps_per_app']
         self.steps_per_app_reopen = cfg['steps_per_app_reopen']
         self.steps_per_episode = cfg['steps_per_episode']
@@ -82,6 +83,8 @@ class RelevantActionEnvironment(Environment):
         self.finished = False
         if self.step % self.steps_per_app_reopen == 0 or self.step % self.steps_per_app == 0:
             try:
+                if self.recreate_on_app and self.step % self.steps_per_app == 0 and self.step != 0:
+                    self.phone.restart(recreate_phone=True)
                 self.phone.close_app(self.get_current_app(step=self.step - 1),
                                      reset_maintained_activities=self.step % self.steps_per_app == 0)
             except Exception:
