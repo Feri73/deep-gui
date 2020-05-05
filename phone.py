@@ -266,13 +266,8 @@ class Phone:
         print(f'{datetime.now()}: opening {app_name} in {self.device_name}')
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
-        wait = not self.is_in_app(app_name, False)
-        self.adb(f'shell am start -n {self.app_activity_dict[app_name]}')
-        # this is not the best way i can do it, cuz it needs to make sure i call is_in_app every time i call this
-        if wait:
-            time.sleep(self.app_start_wait_time)
-        else:
-            print(f'{datetime.now()}: not waiting because the app was already in the stack in #{self.device_name}')
+        self.adb(f'shell am start -W -n {self.app_activity_dict[app_name]}')
+        time.sleep(self.app_start_wait_time)
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.maintain_visited_activities and perform_checks:
