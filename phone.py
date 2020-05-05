@@ -277,7 +277,8 @@ class Phone:
             self.maintain_current_activity()
         self.step += 1
         screenshot_dir = os.path.abspath(f'.tmp-{self.device_name}')
-        shutil.rmtree(screenshot_dir)
+        for file in glob.glob(f'.tmp-{self.device_name}/Screenshot*.png'):
+            os.remove(file)
         self.adb(f'emu screenrecord screenshot {screenshot_dir}')
         image_path = glob.glob(f'.tmp-{self.device_name}/Screenshot*.png')[0]
         res = mpimg.imread(image_path)[:, :, :-1]
