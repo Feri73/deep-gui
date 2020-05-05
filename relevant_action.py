@@ -85,7 +85,11 @@ class RelevantActionEnvironment(Environment):
         if self.step % self.steps_per_app_reopen == 0 or self.step % self.steps_per_app == 0:
             try:
                 if self.recreate_on_app and self.step % self.steps_per_app == 0:
-                    self.phone.restart(recreate_phone=True)
+                    if self.step == 0:
+                        self.phone.recreate_emulator()
+                        self.phone.start_phone(True)
+                    else:
+                        self.phone.restart(recreate_phone=True)
                     self.phone.install_apk(self.get_current_app(apk=True))
                 else:
                     self.phone.close_app(self.get_current_app(step=self.step - 1),
