@@ -85,8 +85,10 @@ class RelevantActionEnvironment(Environment):
             try:
                 if self.recreate_on_app and self.step % self.steps_per_app == 0 and self.step != 0:
                     self.phone.restart(recreate_phone=True)
-                self.phone.close_app(self.get_current_app(step=self.step - 1),
-                                     reset_maintained_activities=self.step % self.steps_per_app == 0)
+                    self.phone.install_apk(self.get_current_app(apk=True))
+                else:
+                    self.phone.close_app(self.get_current_app(step=self.step - 1),
+                                         reset_maintained_activities=self.step % self.steps_per_app == 0)
             except Exception:
                 pass
             # if self.cur_app_index == 0:
