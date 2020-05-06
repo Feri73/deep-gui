@@ -4,7 +4,7 @@ import shutil
 import re
 import subprocess
 import time
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Tuple
 
 import matplotlib.image as mpimg
 import numpy as np
@@ -45,6 +45,7 @@ class Phone:
         self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.unlock = cfg['unlock']
         self.app_activity_dict = {}
+        self.all_activities_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
         self.app_names = [self.get_app_name(apk_path) for apk_path in self.apk_names]
         self.apk_names, self.app_names = zip(*[x for x in zip(self.apk_names, self.app_names) if x[1] is not None])
@@ -62,7 +63,8 @@ class Phone:
             return res.decode('utf-8')
         return res
 
-    def update_code_coverage(self, apk_name: str) -> Optional[float]:
+    def update_code_coverage(self, apk_name: str) -> Optional[Tuple[float, ...]]:
+        print(f'{datetime.now()}: getting code coverage for {apk_name} in {self.device_name}')
         try:
             self.adb('shell am broadcast -a edu.gatech.m3.emma.COLLECT_COVERAGE')
             coverage_path = os.path.abspath(f'.cov_tmp-{self.device_name}.ec')
@@ -73,8 +75,8 @@ class Phone:
             command = f'java -cp "{self.emma_jar_path}" emma report -r txt --in "{apk_name}.em" -in "{coverage_path}"' \
                       f' -Dreport.txt.out.file="{coverage_path}.txt"'
             subprocess.check_output(command, shell=True)
-            cov_sum = 0
-            all_sum = 0
+            cov_sum = np.zeros(4)
+            all_sum = np.zeros(4)
             with open(f'{coverage_path}.txt', 'r') as report_file:
                 lines = report_file.readlines()
                 in_table = False
@@ -85,15 +87,15 @@ class Phone:
                         continue
                     elif not in_table or len(line) < 3 or line[0] == '[' or line[0] == '-':
                         continue
-                    ln, nm = tuple(line.split('\t')[-2:])
+                    *vals, nm = tuple(line.split('\t'))
                     if nm.endswith('EmmaInstrument'):
                         continue
-                    cov, all = tuple(ln.split('(')[1].split(')')[0].split('/'))
-                    cov_sum += float(cov)
-                    all_sum += float(all)
+                    cov, all = tuple(zip(*[val.split('(')[1].split(')')[0].split('/') for val in vals]))
+                    cov_sum += tuple(map(float, cov))
+                    all_sum += tuple(map(float, all))
             os.remove(coverage_path)
             os.remove(f'{coverage_path}.txt')
-            return cov_sum / all_sum
+            return tuple(cov_sum / all_sum)
         except Exception as ex:
             print(f'{datetime.now()}: '
                   f'exception happened while maintaining code coverage in {self.device_name} -> {ex}')
@@ -252,18 +254,19 @@ class Phone:
         self.app_activity_dict[app_name] = activityRE.search(lines[1]).group(1)
 
     def get_app_all_activities(self, apk_path: str) -> List[str]:
-        # add caching here
-        try:
-            apk_path = os.path.abspath(apk_path)
-            sed_pattern = r'/ activity /{:loop n;s/^.*android:name.*="\([^"]\{1,\}\)".*/\1/;T loop;p;t}'
-            command = f'{self.aapt_path} list -a "{apk_path}" | sed -n \'{sed_pattern}\''
-            res = subprocess.check_output(command, shell=True).decode('utf-8')
-            res = res.split('\n')
-            return [r for r in res if len(r) > 0]
-        except Exception as ex:
-            print(f'{datetime.now()}: could not get all activities for'
-                  f' {apk_path} in {self.device_name} because of {ex}')
-            return []
+        if apk_path not in self.all_activities_dict:
+            try:
+                apk_path = os.path.abspath(apk_path)
+                sed_pattern = r'/ activity /{:loop n;s/^.*android:name.*="\([^"]\{1,\}\)".*/\1/;T loop;p;t}'
+                command = f'{self.aapt_path} list -a "{apk_path}" | sed -n \'{sed_pattern}\''
+                res = subprocess.check_output(command, shell=True).decode('utf-8')
+                res = res.split('\n')
+                self.all_activities_dict[apk_path] = [r for r in res if len(r) > 0]
+            except Exception as ex:
+                print(f'{datetime.now()}: could not get all activities for'
+                      f' {apk_path} in {self.device_name} because of {ex}')
+                self.all_activities_dict[apk_path] = []
+        return self.all_activities_dict[apk_path]
 
     def open_app(self, app_name: str) -> None:
         print(f'{datetime.now()}: opening {app_name} in {self.device_name}')

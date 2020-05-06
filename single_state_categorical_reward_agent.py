@@ -799,7 +799,6 @@ class CollectorLogger(EnvironmentCallbacks):
         self.steps_per_new_file = cfg['steps_per_new_file']
         self.log_preprocessed_screen = cfg['log_preprocessed_screen']
         self.log_reward_prediction = cfg['log_reward_prediction']
-        self.log_max_activities = cfg['log_max_activities']
         self.environment = None
 
         assert self.coverage_log_frequency % self.scalar_log_frequency == 0
@@ -817,10 +816,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.clustering = None
         self.scalars = {}
         self.summary_writer = None
-        self.max_activity_count_summary_writer = None
         self.summary = tf.Summary()
-        self.current_apk = None
-        self.current_apk_max_activities = None
 
         preds_clusterer.add_callback(self.on_new_clustering)
         self.dependencies = [BufferLogger(self.image_log_frequency,
@@ -838,6 +834,7 @@ class CollectorLogger(EnvironmentCallbacks):
 
     def set_environment(self, environment: RelevantActionEnvironment):
         self.environment = environment
+        self.environment.add_on_crash_callback(self.on_crash)
 
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
@@ -851,6 +848,11 @@ class CollectorLogger(EnvironmentCallbacks):
     def on_new_scalar(self, name: str, values: List[np.ndarray]) -> None:
         self.scalars[name] = values
 
+    def on_crash(self) -> None:
+        self.log_scalar('Crashes', 0)
+        self.log_scalar('Crashes', 1)
+        self.log_scalar('Crashes', 0)
+
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
         self.rewards.append(np.array(reward))
@@ -861,9 +863,17 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_scalar('Metrics/Reward', self.rewards)
             if self.environment.phone.maintain_visited_activities:
                 self.log_scalar('Metrics/Activity Count', self.activity_count)
+                self.log_scalar('Metrics/Activity Count Percentage',
+                                np.array(self.activity_count) / len(self.environment.phone.get_app_all_activities(
+                                    self.environment.get_current_app(apk=True))))
             if self.local_step % self.coverage_log_frequency == 0:
-                coverage = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True))
-                self.log_scalar('Metrics/Line Coverage', [np.nan if coverage is None else coverage])
+                coverages = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True))
+                if coverages is None:
+                    coverages = [np.nan] * 4
+                self.log_scalar('Coverage/Class', coverages[0])
+                self.log_scalar('Coverage/Method', coverages[1])
+                self.log_scalar('Coverage/Block', coverages[2])
+                self.log_scalar('Coverage/Line', coverages[3])
             for name in self.scalars:
                 self.log_scalar(name, self.scalars[name])
             self.rewards = []
@@ -878,31 +888,20 @@ class CollectorLogger(EnvironmentCallbacks):
             if self.log_reward_prediction:
                 self.log_predictions(self.prediction, self.clustering)
         if self.local_step == 1:
-            self.log_scalar('Metrics/Line Coverage', [0.0])
+            self.log_scalar('Crashes', 0)
+            self.log_scalar('Coverage/Class', 0.0)
+            self.log_scalar('Coverage/Method', 0.0)
+            self.log_scalar('Coverage/Block', 0.0)
+            self.log_scalar('Coverage/Line', 0.0)
         self.action = None
         self.preprocessed_screen = None
         self.clustering = None
-
-    def add_max_activity_summary(self, recalculate: bool) -> None:
-        summary = tf.Summary()
-        if recalculate:
-            self.max_activity_count_summary_writer = tf.summary.FileWriter(
-                f'{self.summary_writer.get_logdir()}_{self.environment.get_current_app()}_activity_count')
-            self.current_apk = self.environment.get_current_app(apk=True)
-            self.current_apk_max_activities = len(self.environment.phone.get_app_all_activities(self.current_apk))
-        summary.value.add(tag="Metrics/Activity Count", simple_value=self.current_apk_max_activities)
-        self.max_activity_count_summary_writer.add_summary(summary, self.local_step - int(not recalculate))
 
     def on_wait(self) -> None:
         if self.local_step % self.steps_per_new_file == 0:
             chunk = self.local_step // self.steps_per_new_file
             print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
-        if self.environment.phone.maintain_visited_activities and self.log_max_activities and \
-                self.environment.get_current_app(apk=True) != self.current_apk:
-            if self.max_activity_count_summary_writer is not None:
-                self.add_max_activity_summary(False)
-            self.add_max_activity_summary(True)
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
 
@@ -946,7 +945,7 @@ class CollectorLogger(EnvironmentCallbacks):
     def log_image(self, name: str, image: np.ndarray) -> None:
         self.summary.value.add(tag=name, image=get_image_summary(image))
 
-    def log_scalar(self, name: str, values: List[Union[np.ndarray, int, float]]) -> None:
+    def log_scalar(self, name: str, values: Union[float, int, np.ndarray, List[Union[np.ndarray, int, float]]]) -> None:
         self.summary.value.add(tag=name, simple_value=np.mean(values))
 
 
@@ -1114,7 +1113,7 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
 
 
 def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_tester: bool,
-                 log_max_activities: bool, agent_option_probs: List[float], agent_clusterer_cfg_name: str,
+                 agent_option_probs: List[float], agent_clusterer_cfg_name: str,
                  weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
@@ -1157,7 +1156,6 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
-    collector_logger_configs['log_max_activities'] = log_max_activities
     reward_predictor_configs['prediction_shape'] = prediction_shape
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
@@ -1291,18 +1289,16 @@ os.environ["KMP_AFFINITY"] = "verbose"
 if __name__ == '__main__':
     remove_logs(logs_dir, reset_logs)
     collector_creators = [partial(create_agent, i, i, probs_and_ops[1] if len(probs_and_ops) > 1 else '',
-                                  False, False, shuffle_apps or i == 0, probs_and_ops[0],
-                                  probs_and_ops[2] if len(probs_and_ops) > 2 else None,
+                                  False, False, probs_and_ops[0], probs_and_ops[2] if len(probs_and_ops) > 2 else None,
                                   weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
                           for i, probs_and_ops in enumerate(collector_option_probs_and_ops)]
     tester_creators = [partial(create_agent, i, i + len(collector_creators),
                                probs_and_ops[1] if len(probs_and_ops) > 1 else '', False, True,
-                               shuffle_apps or i == 0, probs_and_ops[0],
-                               probs_and_ops[2] if len(probs_and_ops) > 2 else None,
+                               probs_and_ops[0], probs_and_ops[2] if len(probs_and_ops) > 2 else None,
                                weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
                        for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
     learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),), 'learner',
-                              True, False, False, None, None, weights_file['learner'])
+                              True, False, None, None, weights_file['learner'])
     coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
     coord.start()
 

@@ -52,6 +52,7 @@ class RelevantActionEnvironment(Environment):
         self.in_blank_screen = False
         self.animation_mask = None
         self.changed_from_last = True
+        self.on_crash_callbacks = []
 
         if not self.recreate_on_app:
             self.phone.start_phone(fresh=self.start_phone_fresh)
@@ -258,6 +259,8 @@ class RelevantActionEnvironment(Environment):
         if self.checked_open_app():
             return
 
+        self.on_crash()
+
         try:
             self.print_error_level(1)
             self.restart_phone(False)
@@ -300,6 +303,13 @@ class RelevantActionEnvironment(Environment):
         self.in_blank_screen = False
         self.has_state_changed = True
         self.changed_from_last = True
+
+    def add_on_crash_callback(self, callback: Callable) -> None:
+        self.on_crash_callbacks.append(callback)
+
+    def on_crash(self) -> None:
+        for callback in self.on_crash_callbacks:
+            callback()
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.step += 1
