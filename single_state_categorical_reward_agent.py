@@ -901,7 +901,8 @@ class CollectorLogger(EnvironmentCallbacks):
         if self.local_step % self.steps_per_new_file == 0:
             chunk = self.local_step // self.steps_per_new_file
             print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
-            self.summary_writer.close()
+            if self.summary_writer is not None:
+                self.summary_writer.close()
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
         self.summary_writer.add_summary(self.summary, self.local_step)
         self.summary = tf.Summary()
