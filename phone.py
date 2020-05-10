@@ -141,8 +141,6 @@ class Phone:
         return res
 
     def wait_for_start(self) -> None:
-        print(f'{datetime.now()}: wait-for-device in {self.device_name}')
-        self.adb('wait-for-device')
         print(f'{datetime.now()}: passed wait-for-device in {self.device_name}')
         st = time.time()
         while time.time() - st < self.phone_start_boot_max_wait_time and not self.is_booted():
@@ -193,6 +191,7 @@ class Phone:
         self.wait_for_start()
 
     def install_apk(self, apk_name: str) -> None:
+        print(f'{datetime.now()}: installing {apk_name} in {self.device_name}.')
         self.adb(f'{self.apk_install_command} "{os.path.abspath(apk_name)}"')
 
     def initial_setups(self) -> None:
