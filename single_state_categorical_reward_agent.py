@@ -867,7 +867,9 @@ class CollectorLogger(EnvironmentCallbacks):
                                 np.array(self.activity_count) / len(self.environment.phone.get_app_all_activities(
                                     self.environment.get_current_app(apk=True))))
             if self.local_step % self.coverage_log_frequency == 0:
-                coverages = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True))
+                chunk = self.local_step // self.steps_per_new_file
+                coverages = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True),
+                                                                        f'{self.name}_{chunk}_{self.local_step}')
                 if coverages is None:
                     coverages = [np.nan] * 4
                 self.log_scalar('Coverage/Class', coverages[0])

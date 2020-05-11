@@ -63,7 +63,7 @@ class Phone:
             return res.decode('utf-8')
         return res
 
-    def update_code_coverage(self, apk_name: str) -> Optional[Tuple[float, ...]]:
+    def update_code_coverage(self, apk_name: str, ec_file_name: str = None) -> Optional[Tuple[float, ...]]:
         print(f'{datetime.now()}: getting code coverage for {apk_name} in {self.device_name}')
         try:
             self.adb('shell am broadcast -a edu.gatech.m3.emma.COLLECT_COVERAGE')
@@ -93,7 +93,11 @@ class Phone:
                     cov, all = tuple(zip(*[val.split('(')[1].split(')')[0].split('/') for val in vals]))
                     cov_sum += tuple(map(float, cov))
                     all_sum += tuple(map(float, all))
-            os.remove(coverage_path)
+            os.makedirs('coverages', exist_ok=True)
+            if ec_file_name is None:
+                os.remove(coverage_path)
+            else:
+                os.rename(coverage_path, f'coverages/{ec_file_name}.ec')
             os.remove(f'{coverage_path}.txt')
             return tuple(cov_sum / all_sum)
         except Exception as ex:
@@ -141,7 +145,6 @@ class Phone:
         return res
 
     def wait_for_start(self) -> None:
-        print(f'{datetime.now()}: passed wait-for-device in {self.device_name}')
         st = time.time()
         while time.time() - st < self.phone_start_boot_max_wait_time and not self.is_booted():
             time.sleep(2)
