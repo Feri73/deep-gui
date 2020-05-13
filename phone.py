@@ -349,7 +349,7 @@ class DummyPhone:
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
 
-    def update_code_coverage(self, apk_name: str) -> float:
+    def update_code_coverage(self, apk_name: str, ec_file_name: str = None) -> float:
         return 0.0
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:

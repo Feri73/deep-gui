@@ -799,6 +799,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.steps_per_new_file = cfg['steps_per_new_file']
         self.log_preprocessed_screen = cfg['log_preprocessed_screen']
         self.log_reward_prediction = cfg['log_reward_prediction']
+        self.steps_per_app = cfg['steps_per_app']
         self.environment = None
 
         assert self.coverage_log_frequency % self.scalar_log_frequency == 0
@@ -868,8 +869,9 @@ class CollectorLogger(EnvironmentCallbacks):
                                     self.environment.get_current_app(apk=True))))
             if self.local_step % self.coverage_log_frequency == 0:
                 chunk = self.local_step // self.steps_per_new_file
-                coverages = self.environment.phone.update_code_coverage(self.environment.get_current_app(apk=True),
-                                                                        f'{self.name}_{chunk}_{self.local_step}')
+                coverages = self.environment.phone.update_code_coverage(
+                    self.environment.get_current_app(apk=True, step=self.local_step - 1),
+                    f'{self.name}_{chunk}_{self.local_step}')
                 if coverages is None:
                     coverages = [np.nan] * 4
                 self.log_scalar('Coverage/Class', coverages[0])
@@ -889,25 +891,29 @@ class CollectorLogger(EnvironmentCallbacks):
                 self.log_screen('Screen/Preprocessed', self.preprocessed_screen, self.to_preprocessed_coord)
             if self.log_reward_prediction:
                 self.log_predictions(self.prediction, self.clustering)
-        if self.local_step == 1:
-            self.log_scalar('Crashes', 0)
-            self.log_scalar('Coverage/Class', 0.0)
-            self.log_scalar('Coverage/Method', 0.0)
-            self.log_scalar('Coverage/Block', 0.0)
-            self.log_scalar('Coverage/Line', 0.0)
         self.action = None
         self.preprocessed_screen = None
         self.clustering = None
 
     def on_wait(self) -> None:
+        if self.summary_writer is not None:
+            self.summary_writer.add_summary(self.summary, self.local_step)
+        self.summary = tf.Summary()
+
         if self.local_step % self.steps_per_new_file == 0:
             chunk = self.local_step // self.steps_per_new_file
-            print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
             if self.summary_writer is not None:
                 self.summary_writer.close()
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
-        self.summary_writer.add_summary(self.summary, self.local_step)
-        self.summary = tf.Summary()
+            print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
+        if self.local_step % self.steps_per_app == 0:
+            self.log_scalar('Crashes', 0)
+            self.log_scalar('Coverage/Class', 0.0)
+            self.log_scalar('Coverage/Method', 0.0)
+            self.log_scalar('Coverage/Block', 0.0)
+            self.log_scalar('Coverage/Line', 0.0)
+            self.summary_writer.add_summary(self.summary, self.local_step)
+            self.summary = tf.Summary()
 
     def on_new_preprocessed_screen(self, screen: np.ndarray) -> None:
         # assert self.preprocessed_screen is None
@@ -1139,6 +1145,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     l1_reg_coeff = cfg['l1_reg_coeff']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
+    steps_per_app = environment_configs['steps_per_app']
     batch_size = learner_configs['batch_size'] if is_learner else 1
     screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
@@ -1160,6 +1167,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     learner_configs['file_dir'] = data_file_dir
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
+    collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
