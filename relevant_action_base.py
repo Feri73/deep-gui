@@ -5,7 +5,6 @@ from typing import Tuple, Optional, Callable
 
 import matplotlib.cm as cm
 import numpy as np
-import scipy.misc
 import tensorflow as tf
 from PIL import Image, ImageDraw
 
@@ -262,7 +261,7 @@ class Agent(TF1RLAgent, MultiCoordinatorCallbacks):
 
 def get_image_summary(image: np.ndarray) -> tf.Summary.Image:
     bio = BytesIO()
-    scipy.misc.toimage(image).save(bio, format="png")
+    Image.fromarray(image).save(bio, format="png")
     res = tf.Summary.Image(encoded_image_string=bio.getvalue(), height=image.shape[0], width=image.shape[1])
     bio.close()
     return res

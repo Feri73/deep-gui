@@ -183,15 +183,15 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser = argparse.ArgumentParser('Simple Analysis')
     parser.add_argument('--zscore', action='store_true')
     parser.add_argument('--zscore-ref', action='store', type=str, choices=['all', *args.tools])
-    parser.add_argument('--axes', action='store', nargs='+', type=str, required=True)
+    parser.add_argument('--zscore-axes', action='store', nargs='+', type=str)
     args = parser.parse_args(args.args[1:], namespace=args)
-    assert args.zscore == (args.zscore_ref is not None)
-    assert args.zscore_ref == 'all' or 'tool' not in args.axes
-
-    dims = ['tool', 'app', 'run', 'time']
-    axes = [dims.index(axis) for axis in args.axes]
+    assert args.zscore == (args.zscore_ref is not None) == (args.zscore_axes is not None)
+    assert args.zscore_ref == 'all' or 'tool' not in args.zscore_axes
 
     if args.zscore:
+        dims = ['tool', 'app', 'run', 'time']
+        axes = [dims.index(axis) for axis in args.zscore_axes]
+
         if args.zscore_ref == 'all':
             logs = zscore_logs(logs, axes=axes)
         else:

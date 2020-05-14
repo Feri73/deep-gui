@@ -13,7 +13,6 @@ from typing import Any, List, Dict, Tuple, Callable, Optional, Union
 
 import matplotlib.cm as cm
 import numpy as np
-import scipy.misc
 import tensorflow as tf
 import tensorflow.keras as keras
 import yaml
@@ -961,7 +960,7 @@ class CollectorLogger(EnvironmentCallbacks):
 
 def get_image_summary(image: np.ndarray) -> tf.Summary.Image:
     bio = BytesIO()
-    scipy.misc.toimage(image).save(bio, format="png")
+    Image.fromarray(image).save(bio, format="png")
     res = tf.Summary.Image(encoded_image_string=bio.getvalue(), height=image.shape[0], width=image.shape[1])
     bio.close()
     return res
