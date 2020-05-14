@@ -193,9 +193,11 @@ class Phone:
                              (f' -no-snapshot-load' if fresh else ''))
         self.wait_for_start()
 
-    def install_apk(self, apk_name: str) -> None:
+    def install_apk(self, apk_name: str, restart: bool = True) -> None:
         print(f'{datetime.now()}: installing {apk_name} in {self.device_name}.')
         self.adb(f'{self.apk_install_command} "{os.path.abspath(apk_name)}"')
+        if restart:
+            self.restart()
 
     def initial_setups(self) -> None:
         # now that I've updated adb see if i can use this again
@@ -206,11 +208,12 @@ class Phone:
             for apk_name, app_name in list(zip(self.apk_names, self.app_names)):
                 try:
                     print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
-                    self.install_apk(apk_name)
+                    self.install_apk(apk_name, False)
                 except Exception:
                     print(f'{datetime.now()}: couldn\'t install {apk_name}. removing it')
                     self.apk_names.remove(apk_name)
                     self.app_names.remove(app_name)
+            self.restart()
 
         # self.adb('shell settings put global window_animation_scale 0')
         # self.adb('shell settings put global transition_animation_scale 0')
@@ -333,7 +336,7 @@ class DummyPhone:
     def recreate_emulator(self) -> None:
         pass
 
-    def install_apk(self, apk_name: str) -> None:
+    def install_apk(self, apk_name: str, restart: bool = True) -> None:
         pass
 
     def close_app(self, app_name: str, reset_maintained_activities: bool = True) -> None:
