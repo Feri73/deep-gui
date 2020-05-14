@@ -21,6 +21,7 @@ class Phone:
         self.port = port
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
+        self.install_wait_time = cfg['install_wait_time']
         self.app_start_wait_time = cfg['app_start_wait_time']
         self.app_exit_wait_time = cfg['app_exit_wait_time']
         self.phone_boot_wait_time = cfg['phone_boot_wait_time']
@@ -196,6 +197,7 @@ class Phone:
     def install_apk(self, apk_name: str, restart: bool = True) -> None:
         print(f'{datetime.now()}: installing {apk_name} in {self.device_name}.')
         self.adb(f'{self.apk_install_command} "{os.path.abspath(apk_name)}"')
+        time.sleep(self.install_wait_time)
         if restart:
             self.restart()
 
