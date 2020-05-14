@@ -858,7 +858,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.local_step += 1
         self.rewards.append(np.array(reward))
         valid_visited_activities = {x for x in self.environment.phone.visited_activities
-                                    if x.startswith(self.environment.get_current_app())}
+                                    if x.startswith(self.environment.get_current_app(step=self.local_step - 1))}
         self.activity_count.append(np.array(len(valid_visited_activities)))
         if self.local_step % self.scalar_log_frequency == 0:
             self.log_scalar('Metrics/Reward', self.rewards)
@@ -866,7 +866,7 @@ class CollectorLogger(EnvironmentCallbacks):
                 self.log_scalar('Metrics/Activity Count', self.activity_count)
                 self.log_scalar('Metrics/Activity Count Percentage',
                                 np.array(self.activity_count) / len(self.environment.phone.get_app_all_activities(
-                                    self.environment.get_current_app(apk=True))))
+                                    self.environment.get_current_app(apk=True,  step=self.local_step - 1))))
             if self.local_step % self.coverage_log_frequency == 0:
                 chunk = self.local_step // self.steps_per_new_file
                 coverages = self.environment.phone.update_code_coverage(
