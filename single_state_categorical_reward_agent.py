@@ -1158,6 +1158,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     prediction_shape = cfg['prediction_shape']
     variance_reg_coeff = cfg['variance_reg_coeff']
     l1_reg_coeff = cfg['l1_reg_coeff']
+    use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
@@ -1229,16 +1230,17 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             combine_prediction_to_actions(built_prediction_to_action_options, agent_option_probs),
             name='action_predictor')(predictions)
 
-        logger = CollectorLogger(f'{agent_name}_{"tester" if is_tester else "collector"}{id}',
-                                 screen_preprocessor.output, reward_predictor.output,
-                                 built_prediction_to_action_options[0], action_pos_to_screen_pos,
-                                 lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
-                                                              screen_preprocessor_resize_size_a /
-                                                              screen_preprocessor_crop_size_a, np.array([0, 0])),
-                                 collector_logger_configs)
+        if use_logger:
+            logger = CollectorLogger(f'{agent_name}_{"tester" if is_tester else "collector"}{id}',
+                                     screen_preprocessor.output, reward_predictor.output,
+                                     built_prediction_to_action_options[0], action_pos_to_screen_pos,
+                                     lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
+                                                                  screen_preprocessor_resize_size_a /
+                                                                  screen_preprocessor_crop_size_a, np.array([0, 0])),
+                                     collector_logger_configs)
 
-        action = keras.layers.Lambda(control_dependencies,
-                                     name='log_dependency_controller')((action, logger.get_dependencies()))
+            action = keras.layers.Lambda(control_dependencies,
+                                         name='log_dependency_controller')((action, logger.get_dependencies()))
 
     model = keras.Model(inputs=input, outputs=action)
 
@@ -1257,8 +1259,9 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
         env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
                                                               5554 + 2 * agent_num, phone_configs),
                                         action2pos, environment_configs)
-        env.add_callback(logger)
-        logger.set_environment(env)
+        if use_logger:
+            env.add_callback(logger)
+            logger.set_environment(env)
         return env
 
     if is_learner:

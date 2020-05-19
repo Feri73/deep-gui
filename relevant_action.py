@@ -1,4 +1,5 @@
 import os
+import subprocess
 import time
 import time as tm
 import traceback
@@ -40,7 +41,12 @@ class RelevantActionEnvironment(Environment):
         self.screenshots_interval = cfg['screenshots_interval']
         self.remove_bad_apps = cfg['remove_bad_apps']
         self.start_phone_fresh = cfg['start_phone_fresh']
+        self.app_start_callback = cfg['app_start_callback']
+        self.app_end_callback = cfg['app_end_callback']
+        self.fatal_error_callback = cfg['fatal_error_callback']
+        self.fatal_error_handled_callback = cfg['fatal_error_handled_callback']
         shuffle_apps = cfg['shuffle_apps']
+        self.threw_fatal_error = False
         assert self.steps_per_app % self.steps_per_episode == 0
         assert self.steps_per_app % self.steps_per_app_reopen == 0
         assert self.steps_per_app_reopen % self.steps_per_episode == 0
@@ -83,9 +89,12 @@ class RelevantActionEnvironment(Environment):
 
     def restart(self) -> None:
         self.finished = False
-        if self.step % self.steps_per_app_reopen == 0 or self.step % self.steps_per_app == 0:
+        change_app = self.step % self.steps_per_app == 0
+        if change_app and self.step != 0:
+            self.on_app_end()
+        if self.step % self.steps_per_app_reopen == 0 or change_app:
             try:
-                if self.recreate_on_app and self.step % self.steps_per_app == 0:
+                if self.recreate_on_app and change_app:
                     if self.step == 0:
                         self.phone.recreate_emulator()
                         self.phone.start_phone(True)
@@ -99,8 +108,28 @@ class RelevantActionEnvironment(Environment):
             # if self.cur_app_index == 0:
             #     self.phone.load_snapshot('fresh')
             self.phone.open_app(self.get_current_app())
+            if change_app:
+                self.on_app_start()
             self.has_state_changed = True
             self.changed_from_last = True
+
+    def on_app_start(self) -> None:
+        subprocess.run(self.app_start_callback.format(apk=self.get_current_app(apk=True),
+                                                      device=self.phone.device_name))
+
+    def on_app_end(self) -> None:
+        subprocess.run(self.app_end_callback.format(apk=self.get_current_app(apk=True),
+                                                    device=self.phone.device_name))
+
+    def on_fatal_error(self) -> None:
+        if not self.threw_fatal_error:
+            subprocess.run(self.fatal_error_callback.format(device=self.phone.device_name))
+            self.threw_fatal_error = True
+
+    def on_fatal_error_handled(self) -> None:
+        if self.threw_fatal_error:
+            subprocess.run(self.fatal_error_handled_callback.format(device=self.phone.device_name))
+            self.threw_fatal_error = False
 
     def is_finished(self) -> bool:
         return self.finished
@@ -259,6 +288,7 @@ class RelevantActionEnvironment(Environment):
             return
 
         self.on_crash()
+        self.on_fatal_error()
 
         try:
             self.print_error_level(1)
@@ -298,6 +328,7 @@ class RelevantActionEnvironment(Environment):
         super().on_error()
 
         self.handle_error()
+        self.on_fatal_error_handled()
 
         self.in_blank_screen = False
         self.has_state_changed = True

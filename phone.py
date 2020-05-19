@@ -314,7 +314,6 @@ class DummyPhone:
         self.configs = cfg['dummy_mode_configs']
         self.crop_top_left = cfg['crop_top_left']
         self.crop_size = cfg['crop_size']
-        self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.points_nums_avg = self.configs[0]
         self.points_nums_var = self.configs[1]
         self.points_size_avg = self.configs[2]
