@@ -23,6 +23,9 @@ class EnvironmentCallbacks:
     def on_error(self) -> None:
         pass
 
+    def on_environment_finished(self) -> None:
+        pass
+
 
 class EnvironmentController(ABC):
     def should_continue_episode(self) -> bool:
@@ -58,6 +61,7 @@ class Environment(ABC):
             premature = False
             while not self.is_finished():
                 if self.stopped:
+                    self.on_environment_finished()
                     return
                 if not self.should_continue_episode():
                     premature = True
@@ -69,6 +73,7 @@ class Environment(ABC):
                 cur_state = self.read_state()
                 self.on_state_change(last_state, action, cur_state, reward)
             self.on_episode_end(premature)
+        self.on_environment_finished()
 
     @abstractmethod
     def restart(self) -> None:
@@ -114,3 +119,7 @@ class Environment(ABC):
     def on_error(self) -> None:
         for callback in self.callbacks:
             callback.on_error()
+
+    def on_environment_finished(self) -> None:
+        for callback in self.callbacks:
+            callback.on_environment_finished()

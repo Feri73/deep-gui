@@ -389,6 +389,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
         self.learner = None
         self.file_completions = defaultdict(list)
+        self.environment_completion_count = 0
 
         self.learner_thread = None
         self.collector_threads = []
@@ -418,6 +419,12 @@ class Coordinator(ABC, EnvironmentCallbacks):
     def on_episode_end(self, premature: bool) -> None:
         self.get_thread_locals().pop_and_run_next(self)
         self.local_update_collector_weight()
+
+    def on_environment_finished(self) -> None:
+        self.learner_thread.add_to_run_queue(Coordinator.record_environment_completion)
+
+    def record_environment_completion(self):
+        self.environment_completion_count += 1
 
     def local_set_new_weight(self, new_weight: List[tf.Tensor]) -> None:
         self.get_thread_locals().new_weight = new_weight
@@ -470,7 +477,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
         else:
             print(f'{datetime.now()}: sending dummy to workers.')
             self.send_to_workers(Coordinator.dummy)
-        while True:
+        while self.environment_completion_count < len(self.collector_creators) + len(self.tester_creators):
             self.learner_thread.pop_and_run_next(self)
             time.sleep(1)
 
@@ -799,6 +806,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.log_preprocessed_screen = cfg['log_preprocessed_screen']
         self.log_reward_prediction = cfg['log_reward_prediction']
         self.steps_per_app = cfg['steps_per_app']
+        self.chunk_start = cfg['chunk_start']
         self.environment = None
 
         assert self.coverage_log_frequency % self.scalar_log_frequency == 0
@@ -831,6 +839,9 @@ class CollectorLogger(EnvironmentCallbacks):
                              partial(self.on_new_scalar,
                                      'Predictions/Std'), True)(tf.math.reduce_std(reward_prediction[0]))
             ]
+
+    def get_chunk(self) -> int:
+        return self.local_step // self.steps_per_new_file + self.chunk_start
 
     def set_environment(self, environment: RelevantActionEnvironment):
         self.environment = environment
@@ -865,12 +876,11 @@ class CollectorLogger(EnvironmentCallbacks):
                 self.log_scalar('Metrics/Activity Count', self.activity_count)
                 self.log_scalar('Metrics/Activity Count Percentage',
                                 np.array(self.activity_count) / len(self.environment.phone.get_app_all_activities(
-                                    self.environment.get_current_app(apk=True,  step=self.local_step - 1))))
+                                    self.environment.get_current_app(apk=True, step=self.local_step - 1))))
             if self.local_step % self.coverage_log_frequency == 0:
-                chunk = self.local_step // self.steps_per_new_file
                 coverages = self.environment.phone.update_code_coverage(
                     self.environment.get_current_app(apk=True, step=self.local_step - 1),
-                    f'{self.name}_{chunk}_{self.local_step}')
+                    f'{self.name}_{self.get_chunk()}_{self.local_step}')
                 if coverages is None:
                     coverages = [np.nan] * 4
                 self.log_scalar('Coverage/Class', coverages[0])
@@ -894,13 +904,15 @@ class CollectorLogger(EnvironmentCallbacks):
         self.preprocessed_screen = None
         self.clustering = None
 
-    def on_wait(self) -> None:
+    def write_summary(self) -> None:
         if self.summary_writer is not None:
             self.summary_writer.add_summary(self.summary, self.local_step)
-        self.summary = tf.Summary()
 
+    def on_wait(self) -> None:
+        self.write_summary()
+        self.summary = tf.Summary()
         if self.local_step % self.steps_per_new_file == 0:
-            chunk = self.local_step // self.steps_per_new_file
+            chunk = self.get_chunk()
             if self.summary_writer is not None:
                 self.summary_writer.close()
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
@@ -913,6 +925,10 @@ class CollectorLogger(EnvironmentCallbacks):
             self.log_scalar('Coverage/Line', 0.0)
             self.summary_writer.add_summary(self.summary, self.local_step)
             self.summary = tf.Summary()
+
+    def on_environment_finished(self) -> None:
+        self.write_summary()
+        self.summary_writer.close()
 
     def on_new_preprocessed_screen(self, screen: np.ndarray) -> None:
         # assert self.preprocessed_screen is None

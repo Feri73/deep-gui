@@ -69,15 +69,18 @@ class Phone:
         try:
             self.adb('shell am broadcast -a edu.gatech.m3.emma.COLLECT_COVERAGE')
             coverage_path = os.path.abspath(f'.cov_tmp-{self.device_name}.ec')
+            print(f'{datetime.now()}: downloading coverage for {apk_name} in {self.device_name}')
             self.adb(f'pull /mnt/sdcard/coverage.ec "{coverage_path}"')
             while not os.path.isfile(f'{coverage_path}'):
                 continue
             self.adb(f'shell rm /mnt/sdcard/coverage.ec')
             command = f'java -cp "{self.emma_jar_path}" emma report -r txt --in "{apk_name}.em" -in "{coverage_path}"' \
                       f' -Dreport.txt.out.file="{coverage_path}.txt"'
+            print(f'{datetime.now()}: running emma report for {apk_name} in {self.device_name}')
             subprocess.check_output(command, shell=True)
             cov_sum = np.zeros(4)
             all_sum = np.zeros(4)
+            print(f'{datetime.now()}: parsing emma report for {apk_name} in {self.device_name}')
             with open(f'{coverage_path}.txt', 'r') as report_file:
                 lines = report_file.readlines()
                 in_table = False
@@ -354,8 +357,8 @@ class DummyPhone:
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
         return True
 
-    def update_code_coverage(self, apk_name: str, ec_file_name: str = None) -> float:
-        return 0.0
+    def update_code_coverage(self, apk_name: str, ec_file_name: str = None) -> Optional[Tuple[float, ...]]:
+        return None
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.screen is None:

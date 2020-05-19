@@ -12,7 +12,8 @@ from scipy import stats
 import tensorflow as tf
 
 Logs = Dict[str, np.ndarray]
-AnalysisResult = Tuple[Tuple[Union[Logs, Tuple[Logs, Logs]], str, List[List[str]]], ...]
+DimVals = List[Union[str, List[str]]]
+AnalysisResult = Tuple[Tuple[Union[Logs, Tuple[Logs, Logs]], str, DimVals], ...]
 
 
 def read_logs(logs_dir: str, tags: List[str], tools: List[str], apps: List[str], runs_per_app: int,
@@ -101,10 +102,14 @@ def read_logs(logs_dir: str, tags: List[str], tools: List[str], apps: List[str],
     return result
 
 
-def _write_values(tag: str, values: np.ndarray, errors: Optional[np.ndarray], dim_vals: List[List[str]],
+def _write_values(tag: str, values: np.ndarray, errors: Optional[np.ndarray], dim_vals: DimVals,
                   dim_val_is: List[int], writers: Dict[str, tf.summary.FileWriter],
                   logs_dir: str, analysis: str) -> None:
-    if values.ndim == 1:
+    if values.ndim == 0 or dim_vals[len(dim_val_is)] is None:
+        if values.ndim == 0:
+            values = [values]
+            if errors is not None:
+                errors = [errors]
         for i, v in enumerate(values):
             summary = tf.Summary()
             summary.value.add(tag=tag, simple_value=v)
@@ -112,7 +117,8 @@ def _write_values(tag: str, values: np.ndarray, errors: Optional[np.ndarray], di
                 summary.value.add(tag=tag, simple_value=v + errors[i])
                 summary.value.add(tag=tag, simple_value=v - errors[i])
                 summary.value.add(tag=tag, simple_value=v)
-            key = analysis + '_' + '_'.join([dim_vals[i][d_i] for i, d_i in enumerate(dim_val_is)])
+            key = analysis + '_' + '_'.join([f'{dim_vals[j]}{d_i}' if isinstance(dim_vals[j], str)
+                                             else dim_vals[j][d_i] for j, d_i in enumerate(dim_val_is)])
             if key not in writers:
                 path = f'{logs_dir}/{key}'
                 if os.path.isdir(path):
@@ -128,7 +134,9 @@ def _write_values(tag: str, values: np.ndarray, errors: Optional[np.ndarray], di
 def write_logs(logs: Logs, error_logs: Optional[Logs], dim_vals: List[List[str]], logs_dir: str, analysis: str):
     writers = {}
     for tag, values in logs.items():
-        assert values.shape[:-1] == tuple(len(x) for x in dim_vals)
+        for i, vs in enumerate(dim_vals[:-1]):
+            assert isinstance(vs, str) or values.shape[i] == len(vs)
+        assert dim_vals[-1] is None or isinstance(dim_vals[-1], str) or values.shape[-1] == len(dim_vals[-1])
         _write_values(tag, values, None if error_logs is None else error_logs[tag],
                       dim_vals, [], writers, logs_dir, analysis)
     for writer in writers.values():
@@ -181,32 +189,38 @@ def error_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
 
 def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser = argparse.ArgumentParser('Simple Analysis')
-    parser.add_argument('--zscore', action='store_true')
-    parser.add_argument('--zscore-ref', action='store', type=str, choices=['all', *args.tools])
-    parser.add_argument('--zscore-axes', action='store', nargs='+', type=str)
+    parser.add_argument('--norm-type', action='store', type=str, choices=['mean', 'zscore'])
+    parser.add_argument('--norm-ref', action='store', type=str, choices=['all', *args.tools])
+    parser.add_argument('--norm-axes', action='store', nargs='+', type=str)
+    parser.add_argument('--summary-axes', action='store', nargs='+', type=str, required=True)
     args = parser.parse_args(args.args[1:], namespace=args)
-    assert args.zscore == (args.zscore_ref is not None) == (args.zscore_axes is not None)
-    assert args.zscore_axes is None or args.zscore_ref == 'all' or 'tool' not in args.zscore_axes
+    assert (args.norm_type is not None) == (args.norm_axes is not None)
+    assert args.norm_type is None or args.norm_ref is None or 'tool' not in args.norm_axes
 
-    if args.zscore:
-        dims = ['tool', 'app', 'run', 'time']
-        axes = [dims.index(axis) for axis in args.zscore_axes]
+    dims = ['tool', 'app', 'run', 'time']
+    dim_vals = [args.tools, args.apps, 'run', None]
 
-        if args.zscore_ref == 'all':
-            logs = zscore_logs(logs, axes=axes)
-        else:
-            ref_index = args.tools.index(args.zscore_ref)
-            ref_mean = mean_logs(logs, axes=axes, keep_shape=True)
-            ref_std = std_logs(logs, axes=axes, keep_shape=True)
-            for tag in logs.keys():
-                logs[tag] = (logs[tag] - ref_mean[tag][ref_index: ref_index + 1]) / \
-                            (ref_std[tag][ref_index: ref_index + 1] + np.finfo(float).eps)
+    if args.norm_type is not None:
+        norm_axes = sorted([dims.index(axis) for axis in args.norm_axes])
 
-    means = mean_logs(logs, axes=[1, 2])
-    errors = error_logs(logs, axes=[1, 2])
+        ref_mean = mean_logs(logs, axes=norm_axes, keep_shape=True)
+        ref_std = std_logs(logs, axes=norm_axes, keep_shape=True)
+        ref_slice = slice(None)
+        if args.norm_ref is not None:
+            ref_index = args.tools.index(args.norm_ref)
+            ref_slice = slice(ref_index, ref_index + 1)
+        for tag in logs.keys():
+            logs[tag] -= ref_mean[tag][ref_slice]
+            if args.norm_type == 'zscore':
+                logs[tag] /= ref_std[tag][ref_slice] + np.finfo(float).eps
+
+    summary_axes = sorted([dims.index(axis) for axis in args.summary_axes])
+    summary_dim_vals = [dim_val for i, dim_val in enumerate(dim_vals) if i not in summary_axes]
+    means = mean_logs(logs, axes=summary_axes)
+    errors = error_logs(logs, axes=summary_axes)
     name_prefix = 'simple'
-    return ((means, name_prefix + '_means', [args.tools]),
-            ((means, errors), name_prefix + '_errors', [args.tools]))
+    return ((means, name_prefix + '_means', summary_dim_vals),
+            ((means, errors), name_prefix + '_errors', summary_dim_vals))
 
 
 parser = argparse.ArgumentParser()
