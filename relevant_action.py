@@ -114,21 +114,19 @@ class RelevantActionEnvironment(Environment):
             self.changed_from_last = True
 
     def on_app_start(self) -> None:
-        subprocess.run(self.app_start_callback.format(apk=self.get_current_app(apk=True),
-                                                      device=self.phone.device_name))
+        os.system(self.app_start_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
 
     def on_app_end(self) -> None:
-        subprocess.run(self.app_end_callback.format(apk=self.get_current_app(apk=True),
-                                                    device=self.phone.device_name))
+        os.system(self.app_end_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
 
     def on_fatal_error(self) -> None:
         if not self.threw_fatal_error:
-            subprocess.run(self.fatal_error_callback.format(device=self.phone.device_name))
+            os.system(self.fatal_error_callback.format(device=self.phone.device_name))
             self.threw_fatal_error = True
 
     def on_fatal_error_handled(self) -> None:
         if self.threw_fatal_error:
-            subprocess.run(self.fatal_error_handled_callback.format(device=self.phone.device_name))
+            os.system(self.fatal_error_handled_callback.format(device=self.phone.device_name))
             self.threw_fatal_error = False
 
     def is_finished(self) -> bool:
