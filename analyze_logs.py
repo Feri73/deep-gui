@@ -1,4 +1,5 @@
 import argparse
+import glob
 import os
 import pickle
 import shutil
@@ -190,7 +191,7 @@ def error_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
 def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser = argparse.ArgumentParser('Simple Analysis')
     parser.add_argument('--norm-type', action='store', type=str, choices=['mean', 'zscore'])
-    parser.add_argument('--norm-ref', action='store', type=str, choices=['all', *args.tools])
+    parser.add_argument('--norm-ref', action='store', type=str, choices=args.tools)
     parser.add_argument('--norm-axes', action='store', nargs='+', type=str)
     parser.add_argument('--summary-axes', action='store', nargs='+', type=str, required=True)
     args = parser.parse_args(args.args[1:], namespace=args)
@@ -229,13 +230,15 @@ parser.add_argument('--name', action='store', type=str)
 parser.add_argument('--logs-dir', action='store', type=str, required=True)
 parser.add_argument('--tags', action='store', nargs='+', type=str, required=True)
 parser.add_argument('--tools', action='store', nargs='+', type=str, required=True)
-parser.add_argument('--apps', action='store', nargs='+', type=str, required=True)
+parser.add_argument('--apps-dir', action='store', type=str, required=True)
 parser.add_argument('--runs-per-app', action='store', type=int, required=True)
 parser.add_argument('--runs-per-app-per-tester', action='store', type=int, required=True)
 parser.add_argument('--ignore-missing', action='store_true')
 parser.add_argument('--use-cache', action='store_true')
 parser.add_argument('args', action='store', nargs=argparse.REMAINDER, type=str)
 args = parser.parse_args()
+
+args.apps = [os.path.basename(apk)[:-4] for apk in glob.glob(f'{args.apps_dir}/*.apk')]
 
 logs = read_logs(args.logs_dir, args.tags, args.tools, args.apps, args.runs_per_app, args.runs_per_app_per_tester,
                  error_on_missing=not args.ignore_missing, from_cache=args.use_cache, excluded_data_indices=[0])
