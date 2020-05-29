@@ -22,6 +22,7 @@ from sklearn.cluster import AgglomerativeClustering
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
 from phone import DummyPhone, Phone
 from relevant_action import RelevantActionEnvironment
+from relevant_action_monkey_client import RelevantActionMonkeyClient
 from utils import Config, MemVariable, dump_obj, load_obj
 
 
@@ -1147,6 +1148,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     phone_configs = cfg['phone_configs']
     collector_logger_configs = cfg['collector_logger_configs']
     dummy_mode = cfg['dummy_mode']
+    monkey_client_mode = cfg['monkey_client_mode']
     data_file_dir = cfg['data_file_dir']
     logs_dir = cfg['logs_dir']
     collectors_apks_path = cfg['collectors_apks_path']
@@ -1160,6 +1162,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     l1_reg_coeff = cfg['l1_reg_coeff']
     use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
+    adb_path = phone_configs['adb_path']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -1185,6 +1188,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
+    monkey_client_configs = {'adb_path': adb_path}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
@@ -1249,20 +1253,24 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     if is_learner:
         model.compile(optimizer, keras.losses.BinaryCrossentropy())
 
-    phone_type = DummyPhone if dummy_mode else Phone
-
     def action2pos(action: np.ndarray) -> Tuple[int, int, int]:
         pos = action_pos_to_screen_pos(action[:2], np.int32)
         return pos[1], pos[0], action[2]
 
     def create_environment(collector: DataCollectionAgent) -> Environment:
-        env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
-                                                              5554 + 2 * agent_num, phone_configs),
-                                        action2pos, environment_configs)
-        if use_logger:
-            env.add_callback(logger)
-            logger.set_environment(env)
-        return env
+        if monkey_client_mode:
+            env = RelevantActionMonkeyClient(collector, action2pos, 3000 + agent_num,
+                                             5554 + 2 * agent_num, monkey_client_configs)
+            return env
+        else:
+            phone_type = DummyPhone if dummy_mode else Phone
+            env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
+                                                                  5554 + 2 * agent_num, phone_configs),
+                                            action2pos, environment_configs)
+            if use_logger:
+                env.add_callback(logger)
+                logger.set_environment(env)
+            return env
 
     if is_learner:
         return LearningAgent(id, model,

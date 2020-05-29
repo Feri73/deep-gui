@@ -1,5 +1,4 @@
 import os
-import subprocess
 import time
 import time as tm
 import traceback
@@ -28,6 +27,7 @@ class RelevantActionEnvironment(Environment):
         self.crop_size = cfg['crop_size']
         self.pos_reward = cfg['pos_reward']
         self.neg_reward = cfg['neg_reward']
+        self.calculate_reward = cfg['calculate_reward']
         self.steps_per_in_app_check = cfg['steps_per_in_app_check']
         self.force_app_on_top = cfg['force_app_on_top']
         self.in_app_check_trials = cfg['in_app_check_trials']
@@ -235,18 +235,23 @@ class RelevantActionEnvironment(Environment):
                 break
             tmp_time = tm.time()
 
-        self.has_state_changed = True
-        self.changed_from_last = not self.are_states_equal(last_state, self.read_state(), None)
-        print(f'{datetime.now()}: change from last in {self.phone.device_name}: {self.changed_from_last}')
+        if self.calculate_reward:
+            self.has_state_changed = True
+            self.changed_from_last = not self.are_states_equal(last_state, self.read_state(), None)
+            print(f'{datetime.now()}: change from last in {self.phone.device_name}: {self.changed_from_last}')
 
-        print(f'{datetime.now()}: took {screenshot_count} screenshots in {self.phone.device_name} '
-              f'to compute reward. Screen '
-              f'{f"changed at {changed_screenshot_num}" if animation_based_changed_from_last else "did not change"}.')
+            print(f'{datetime.now()}: took {screenshot_count} screenshots in {self.phone.device_name} '
+                  f'to compute reward. Screen '
+                  f'{f"changed at {changed_screenshot_num}" if animation_based_changed_from_last else "did not change"}.')
 
-        if animation_based_changed_from_last:
-            reward = self.pos_reward
+            if animation_based_changed_from_last:
+                reward = self.pos_reward
+            else:
+                reward = self.neg_reward
         else:
-            reward = self.neg_reward
+            self.changed_from_last = True
+            # reward value does not matter
+            reward = (self.pos_reward + self.neg_reward) / 2
 
         return reward
 

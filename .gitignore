@@ -21,3 +21,4 @@
 !single_step_binary_reward_dqn.py
 !single_state_categorical_reward_agent.py
 !analyze_logs.py
+!relevant_action_monkey_client.py
