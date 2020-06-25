@@ -214,6 +214,7 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
             logs[tag] -= ref_mean[tag][ref_slice]
             if args.norm_type == 'zscore':
                 logs[tag] /= ref_std[tag][ref_slice] + np.finfo(float).eps
+                logs[tag] = np.maximum(np.minimum(logs[tag], 4), -4)
 
     summary_axes = sorted([dims.index(axis) for axis in args.summary_axes])
     summary_dim_vals = [dim_val for i, dim_val in enumerate(dim_vals) if i not in summary_axes]
@@ -241,7 +242,7 @@ args = parser.parse_args()
 args.apps = [os.path.basename(apk)[:-4] for apk in glob.glob(f'{args.apps_dir}/*.apk')]
 
 logs = read_logs(args.logs_dir, args.tags, args.tools, args.apps, args.runs_per_app, args.runs_per_app_per_tester,
-                 error_on_missing=not args.ignore_missing, from_cache=args.use_cache, excluded_data_indices=[0])
+                 error_on_missing=not args.ignore_missing, from_cache=args.use_cache)
 
 results = eval(args.analysis + '_analysis')(logs, args)
 for all_logs, name, dim_vals in results:
