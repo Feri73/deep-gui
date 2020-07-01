@@ -45,6 +45,7 @@ class RelevantActionEnvironment(Environment):
         self.app_end_callback = cfg['app_end_callback']
         self.fatal_error_callback = cfg['fatal_error_callback']
         self.fatal_error_handled_callback = cfg['fatal_error_handled_callback']
+        self.restart_after_install = cfg['restart_after_install']
         shuffle_apps = cfg['shuffle_apps']
         self.threw_fatal_error = False
         assert self.steps_per_app % self.steps_per_episode == 0
@@ -100,7 +101,7 @@ class RelevantActionEnvironment(Environment):
                         self.phone.start_phone(True)
                     else:
                         self.phone.restart(recreate_phone=True)
-                    self.phone.install_apk(self.get_current_app(apk=True))
+                    self.phone.install_apk(self.get_current_app(apk=True), restart=self.restart_after_install)
                 self.phone.close_app(self.get_current_app(step=self.step - 1),
                                      reset_maintained_activities=self.step % self.steps_per_app == 0)
             except Exception:
@@ -271,7 +272,7 @@ class RelevantActionEnvironment(Environment):
             self.phone.apk_names.remove(self.get_current_app(apk=True))
         else:
             print(f'reinstalling it to phone #{self.phone.device_name}')
-            self.phone.install_apk(self.get_current_app(apk=True))
+            self.phone.install_apk(self.get_current_app(apk=True), restart=self.restart_after_install)
 
     def restart_phone(self, recreate_phone: bool) -> None:
         try:
