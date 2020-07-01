@@ -114,19 +114,23 @@ class RelevantActionEnvironment(Environment):
             self.changed_from_last = True
 
     def on_app_start(self) -> None:
-        os.system(self.app_start_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
+        if self.app_start_callback is not None:
+            os.system(self.app_start_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
 
     def on_app_end(self) -> None:
-        os.system(self.app_end_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
+        if self.app_end_callback is not None:
+            os.system(self.app_end_callback.format(apk=self.get_current_app(apk=True), device=self.phone.device_name))
 
     def on_fatal_error(self) -> None:
         if not self.threw_fatal_error:
-            os.system(self.fatal_error_callback.format(device=self.phone.device_name))
+            if self.fatal_error_callback is not None:
+                os.system(self.fatal_error_callback.format(device=self.phone.device_name))
             self.threw_fatal_error = True
 
     def on_fatal_error_handled(self) -> None:
         if self.threw_fatal_error:
-            os.system(self.fatal_error_handled_callback.format(device=self.phone.device_name))
+            if self.fatal_error_handled_callback is not None:
+                os.system(self.fatal_error_handled_callback.format(device=self.phone.device_name))
             self.threw_fatal_error = False
 
     def is_finished(self) -> bool:
@@ -213,7 +217,11 @@ class RelevantActionEnvironment(Environment):
         screenshot_count = 1
         changed_screenshot_num = 0
 
-        animation_based_changed_from_last = not self.are_states_equal(last_state, change_state, self.animation_mask)
+        if change_state is not None:
+            animation_based_changed_from_last = not self.are_states_equal(last_state, change_state, self.animation_mask)
+        else:
+            change_state = last_state
+            animation_based_changed_from_last = False
         if animation_based_changed_from_last:
             changed_screenshot_num = screenshot_count
 

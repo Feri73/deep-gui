@@ -1,3 +1,5 @@
+import random
+import string
 from datetime import datetime
 import os
 import shutil
@@ -34,6 +36,7 @@ class Phone:
         self.aapt_path = cfg['aapt_path']
         self.clone_script_path = cfg['clone_script_path']
         self.emma_jar_path = cfg['emma_jar_path']
+        self.screenshots_dir = cfg['screenshots_dir']
         self.grep_command = cfg['grep_command']
         self.timeout_template = cfg['timeout_template']
         self.apk_install_command = cfg['apk_install_command']
@@ -42,9 +45,13 @@ class Phone:
         self.current_activity_regex = cfg['current_activity_regex']
         self.is_in_app_grep = cfg['is_in_app_grep']
         self.is_in_app_regex = cfg['is_in_app_regex']
+        self.scroll_constant = cfg['scroll_constant']
+        self.scroll_event_count = cfg['scroll_event_count']
+        self.keyboard_text_max_length = cfg['keyboard_text_max_length']
         self.install_apks = cfg['install_apks']
         self.maintain_visited_activities = cfg['maintain_visited_activities']
         self.unlock = cfg['unlock']
+        self.disable_input_methods = cfg['disable_input_methods']
         self.app_activity_dict = {}
         self.all_activities_dict = {}
         self.apk_names = glob.glob(f'{apks_path}/*.apk')
@@ -52,8 +59,8 @@ class Phone:
         self.apk_names, self.app_names = zip(*[x for x in zip(self.apk_names, self.app_names) if x[1] is not None])
         self.app_names = list(self.app_names)
         self.apk_names = list(self.apk_names)
-        if not os.path.exists(f'.tmp-{device_name}'):
-            os.makedirs(f'.tmp-{device_name}')
+        if not os.path.exists(f'{self.screenshots_dir}/.tmp-{device_name}'):
+            os.makedirs(f'{self.screenshots_dir}/.tmp-{device_name}')
         self.step = 0
         self.visited_activities = set()
 
@@ -172,6 +179,9 @@ class Phone:
         self.start_emulator(fresh)
         if self.unlock:
             self.adb('shell input keyevent 82')
+        if self.disable_input_methods:
+            for input_method in self.adb('shell ime list -s').split(os.linesep)[:-1]:
+                self.adb(f'shell ime disable {input_method}')
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
         #         copy_tree(ref_snapshot_path, local_snapshot_path)
@@ -212,7 +222,6 @@ class Phone:
         if self.install_apks:
             for apk_name, app_name in list(zip(self.apk_names, self.app_names)):
                 try:
-                    print(f'{datetime.now()}: installing {apk_name} in {self.device_name}')
                     self.install_apk(apk_name, False)
                 except Exception:
                     print(f'{datetime.now()}: couldn\'t install {apk_name}. removing it')
@@ -289,23 +298,45 @@ class Phone:
         if self.maintain_visited_activities and perform_checks:
             self.maintain_current_activity()
         self.step += 1
-        screenshot_dir = os.path.abspath(f'.tmp-{self.device_name}')
-        for file in glob.glob(f'.tmp-{self.device_name}/Screenshot*.png'):
-            os.remove(file)
-        self.adb(f'emu screenrecord screenshot {screenshot_dir}')
-        image_path = glob.glob(f'.tmp-{self.device_name}/Screenshot*.png')[0]
+        screenshot_dir = os.path.abspath(f'{self.screenshots_dir}/.tmp-{self.device_name}')
+        image_path = f'{screenshot_dir}/scr.png'
+        self.adb(f'emu screenrecord screenshot {image_path}')
         res = mpimg.imread(image_path)[:, :, :-1]
         return (res * 255).astype(np.uint8)
 
-    def send_event(self, x: int, y: int, type: int) -> np.ndarray:
-        if type != 0:
-            raise NotImplementedError()
+    def send_event(self, x: int, y: int, type: int) -> Optional[np.ndarray]:
         # better logging
-        print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')
-        self.adb(f'emu event mouse {x} {y} 0 1')
-        res = self.screenshot()
-        self.adb(f'emu event mouse {x} {y} 0 0')
-        return res
+        if type == 0:
+            print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')
+            self.adb(f'emu event mouse {x} {y} 0 1')
+            res = self.screenshot()
+            self.adb(f'emu event mouse {x} {y} 0 0')
+            return res
+        if type == 1:
+            up_scroll = random.uniform(0, 1) > .5
+            print(f'{datetime.now()}: phone {self.device_name}: scroll {"up" if up_scroll else "down"} on {x},{y}')
+            for _y in range(y, y + self.scroll_constant * (-1) ** up_scroll,
+                            self.scroll_constant // self.scroll_event_count * (-1) ** up_scroll):
+                self.adb(f'emu event mouse {x} {_y} 0 1')
+            self.adb(f'emu event mouse {x} {_y} 0 0')
+            return None
+        if type == 2:
+            left_scroll = random.uniform(0, 1) > .5
+            print(f'{datetime.now()}: phone {self.device_name}: swipe {"left" if left_scroll else "right"} on {x},{y}')
+            for _x in range(x, x + self.scroll_constant * (-1) ** left_scroll,
+                            self.scroll_constant // self.scroll_event_count * (-1) ** left_scroll):
+                self.adb(f'emu event mouse {_x} {y} 0 1')
+            self.adb(f'emu event mouse {_x} {y} 0 0')
+            return None
+        if type == 3:
+            text = ''.join(random.choices(string.ascii_letters + string.digits,
+                                          k=random.randint(1, self.keyboard_text_max_length)))
+            print(f'{datetime.now()}: phone {self.device_name}: writing "{text}" on {x},{y}')
+            # self.adb(f'emu event mouse {x} {y} 0 1')
+            # self.adb(f'emu event mouse {x} {y} 0 0')
+            self.adb(f'emu event text {text}')
+            return None
+        raise NotImplementedError()
 
 
 class DummyPhone:

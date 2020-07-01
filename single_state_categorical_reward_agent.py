@@ -808,6 +808,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.log_reward_prediction = cfg['log_reward_prediction']
         self.steps_per_app = cfg['steps_per_app']
         self.chunk_start = cfg['chunk_start']
+        self.scroll_constant = cfg['scroll_constant']
         self.environment = None
 
         assert self.coverage_log_frequency % self.scalar_log_frequency == 0
@@ -851,8 +852,9 @@ class CollectorLogger(EnvironmentCallbacks):
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
 
-    def on_new_clustering(self, clickables: tf.Tensor, clusters: np.ndarray, valid_clusters_nums: np.ndarray) -> None:
-        self.clustering = (clickables.numpy(), clusters, valid_clusters_nums)
+    def on_new_clustering(self, clickables: List[tf.Tensor], clusters: List[np.ndarray],
+                          valid_clusters_nums: List[np.ndarray]) -> None:
+        self.clustering = ([x.numpy() for x in clickables], clusters, valid_clusters_nums)
 
     def on_new_prediction(self, prediction: np.ndarray) -> None:
         self.prediction = prediction
@@ -936,37 +938,57 @@ class CollectorLogger(EnvironmentCallbacks):
         self.preprocessed_screen = (screen * 255).astype(np.uint8)
 
     def log_screen(self, name: str, screen: np.ndarray, point_transformer: Callable, mask: bool = None) -> None:
-        if self.action[-1] != 0:
-            raise NotImplementedError('Only one type of action is supported for now.')
         screen = screen.copy()
         if screen.shape[-1] == 1:
             screen = np.concatenate([screen] * 3, axis=-1)
         if mask is not None:
             screen[mask == 0] = [100, 255, 0]
         action_p = point_transformer(self.action_for_screen(self.action[:2])).astype(np.int32)
-        screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
+        if self.action[-1] == 0:
+            screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
+        elif self.action[-1] == 1:
+            screen[max(0, action_p[0] - 3):action_p[0] + 3,
+            max(0, action_p[1] - self.scroll_constant // 2):action_p[1] + self.scroll_constant // 2] \
+                = [255, 0, 0]
+        elif self.action[-1] == 2:
+            screen[max(0, action_p[0] - self.scroll_constant // 2):action_p[0] + self.scroll_constant // 2,
+            max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
+        elif self.action[-1] == 3:
+            screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [0, 0, 255]
+        else:
+            raise NotImplementedError('Unsupported action.')
 
         self.log_image(name, screen)
 
-    def log_predictions(self, pred: np.ndarray, clustering: Tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
-        if pred.shape[-1] > 1:
-            raise NotImplementedError('Cannot visualize predictions with more than 1 action type.')
-        pred = cm.viridis(pred[:, :, 0])[:, :, :3] * 255
-        if clustering is not None or self.prediction_overlay_factor > 0:
-            prev_size = pred.shape[:2]
-            new_size = self.preprocessed_screen.shape[:2]
-            pred = Image.fromarray(np.uint8(pred))
-            pred = pred.resize(new_size)
-            pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
-            pred = np.array(pred)
-            if clustering is not None:
-                cluster_colors = cm.Reds(np.linspace(0, 1, len(clustering[2])))[:, :3] * 255
-                for cluster in zip(*clustering[:2]):
-                    cl_ind = np.where(clustering[2] == cluster[1])[0]
-                    if len(cl_ind) > 0:
-                        y, x = tuple(cluster[0][:2] * new_size // prev_size)
-                        pred[y:y + self.cluster_color_size, x:x + self.cluster_color_size] = cluster_colors[cl_ind[0]]
-        self.log_image('Predictions', pred)
+    def log_predictions(self, pred: np.ndarray,
+                        clusterings: Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]) -> None:
+        type_count = pred.shape[-1]
+        new_size = self.preprocessed_screen.shape[:2]
+        final_pred_size = (new_size[0] * int(type_count ** .5), new_size[1] * (type_count // int(type_count ** .5)))
+        final_pred = np.zeros((*final_pred_size, 3), dtype=np.uint8)
+        original_pred = np.uint8(cm.viridis(pred)[:, :, :, :3] * 255)
+        for type in range(type_count):
+            pred = original_pred[:, :, type, :]
+            if clusterings is not None or self.prediction_overlay_factor > 0:
+                prev_size = pred.shape[:2]
+                pred = Image.fromarray(pred)
+                pred = pred.resize(new_size)
+                pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
+                pred = np.array(pred)
+                if clusterings is not None:
+                    clustering = tuple(x[type] for x in clusterings)
+                    cluster_colors = cm.Reds(np.linspace(0, 1, len(clustering[2])))[:, :3] * 255
+                    for cluster in zip(*clustering[:2]):
+                        cl_ind = np.where(clustering[2] == cluster[1])[0]
+                        if len(cl_ind) > 0:
+                            y, x = tuple(cluster[0][:2] * new_size // prev_size)
+                            pred[y:y + self.cluster_color_size, x:x + self.cluster_color_size] \
+                                = cluster_colors[cl_ind[0]]
+            type_x = type % (final_pred_size[0] // new_size[0])
+            type_y = type // (final_pred_size[1] // new_size[1])
+            final_pred[type_x * new_size[0]:(type_x + 1) * new_size[0], type_y * new_size[1]:
+                                                                        (type_y + 1) * new_size[1]] = pred
+        self.log_image('Predictions', final_pred)
 
     def log_image(self, name: str, image: np.ndarray) -> None:
         self.summary.value.add(tag=name, image=get_image_summary(image))
@@ -988,7 +1010,7 @@ def index_to_action(index: tf.Tensor, preds: tf.Tensor) -> tf.Tensor:
     y = tf.cast(index // np.prod(shape[1:]), tf.int32)
     x = tf.cast((index // shape[2]) % shape[1], tf.int32)
     type = tf.cast(index % shape[2], tf.int32)
-    return tf.concat([[y], [x], [type]], axis=-1)
+    return tf.transpose(tf.concat([[y], [x], [type]], axis=0))
 
 
 def linear_normalizer(logits: tf.Tensor, axis=None) -> tf.Tensor:
@@ -1009,22 +1031,19 @@ def better_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
 def worse_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
     return index_to_action(
-        most_probable_weighted_policy_user(neg_reward + pos_reward - preds_f), preds)
+        most_probable_weighted_policy_user(1 - preds_f), preds)
 
 
 def least_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    mid_reward = (pos_reward + neg_reward) / 2
-    dist = pos_reward - mid_reward
     return index_to_action(
-        most_probable_weighted_policy_user(dist - tf.abs(mid_reward - preds_f)), preds)
+        most_probable_weighted_policy_user(.5 - tf.abs(.5 - preds_f)), preds)
 
 
 def most_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    mid_reward = (pos_reward + neg_reward) / 2
     return index_to_action(
-        most_probable_weighted_policy_user(tf.abs(mid_reward - preds_f)), preds)
+        most_probable_weighted_policy_user(tf.abs(.5 - preds_f)), preds)
 
 
 def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
@@ -1054,30 +1073,45 @@ class PredictionClusterer:
                               ((self.steps // self.clickable_threshold_speed_step) %
                                self.speed_steps_per_clickable_threshold_reset)
         self.steps += 1
-        if preds.shape[-1] > 1:
-            raise NotImplementedError('Currently cannot use clustering reward to action for actions other than click.')
         if preds.shape[0] > 1:
             raise NotImplementedError('cluster reward is not implemented for batch size > 1.')
-        preds_old, preds = preds, preds[0]
-        clickables = tf.cast(tf.where(preds > clickable_threshold), tf.int32)
-        if len(clickables) == 0:
-            return random_reward_to_action(preds_old)
-        if len(clickables) == 1:
-            chosen_clickable = clickables[0]
-        else:
+        preds_old = preds
+        type_count = preds.shape[-1]
+
+        all_clickables = []
+        all_clusters = []
+        all_valid_clusters_nums = []
+        for type in range(type_count):
+            all_clickables.append([])
+            all_clusters.append([])
+            all_valid_clusters_nums.append([])
+            preds = preds_old[0, :, :, type]
+            clickables = tf.cast(tf.where(preds > clickable_threshold), tf.int32)
+            if len(clickables) == 0:
+                continue
             clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=self.distance_threshold,
                                                 compute_full_tree=True, linkage='single')
             clusters = clusterer.fit_predict(clickables)
             clusters_nums, clusters_counts = np.unique(clusters, axis=0, return_counts=True)
             valid_clusters_nums = clusters_nums[clusters_counts >= self.cluster_count_threshold]
             if len(valid_clusters_nums) == 0:
-                return random_reward_to_action(preds_old)
-            chosen_cluster_num = np.random.choice(valid_clusters_nums, 1)
-            chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster_num)
-            chosen_clickable_i = most_probable_weighted_policy_user(tf.gather_nd(preds, chosen_clickables))
-            chosen_clickable = tf.gather(chosen_clickables, chosen_clickable_i)
-            for callback in self.callbacks:
-                callback(clickables, clusters, valid_clusters_nums)
+                continue
+            all_clickables[-1] = clickables
+            all_clusters[-1] = clusters
+            all_valid_clusters_nums[-1] = valid_clusters_nums
+
+        if sum(map(len, all_clusters)) == 0:
+            return random_reward_to_action(preds_old)
+        chosen_type = np.random.choice([i for i in range(len(all_clusters)) if len(all_clusters[i]) > 0], 1)[0]
+        valid_clusters_nums = all_valid_clusters_nums[chosen_type]
+        clickables = all_clickables[chosen_type]
+        clusters = all_clusters[chosen_type]
+        chosen_cluster_num = np.random.choice(valid_clusters_nums, 1)
+        chosen_clickables = tf.boolean_mask(clickables, clusters == chosen_cluster_num)
+        chosen_clickable_i = most_probable_weighted_policy_user(tf.gather_nd(preds, chosen_clickables))
+        chosen_clickable = tf.concat([tf.gather(chosen_clickables, chosen_clickable_i), [chosen_type]], axis=-1)
+        for callback in self.callbacks:
+            callback(all_clickables, all_clusters, all_valid_clusters_nums)
         return tf.expand_dims(chosen_clickable, axis=0)
 
 
@@ -1163,6 +1197,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
     adb_path = phone_configs['adb_path']
+    scroll_constant = phone_configs['scroll_constant']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -1187,6 +1222,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
+    collector_logger_configs['scroll_constant'] = scroll_constant
     reward_predictor_configs['prediction_shape'] = prediction_shape
     monkey_client_configs = {'adb_path': adb_path}
 

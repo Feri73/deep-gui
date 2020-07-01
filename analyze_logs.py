@@ -175,6 +175,10 @@ def zscore_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
     return process_logs(logs, partial(stats.zscore, axis=-1, nan_policy='omit'), axes, **kwargs)
 
 
+def max_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
+    return process_logs(logs, partial(np.nanmax, axis=-1), axes=axes, reduce=True, **kwargs)
+
+
 def mean_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
     return process_logs(logs, partial(np.nanmean, axis=-1), axes=axes, reduce=True, **kwargs)
 
@@ -193,7 +197,8 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser.add_argument('--norm-type', action='store', type=str, choices=['mean', 'zscore'])
     parser.add_argument('--norm-ref', action='store', type=str, choices=args.tools)
     parser.add_argument('--norm-axes', action='store', nargs='+', type=str)
-    parser.add_argument('--summary-axes', action='store', nargs='+', type=str, required=True)
+    parser.add_argument('--summary-action', action='append', type=str, required=True)
+    parser.add_argument('--summary-axes', action='append', nargs='+', type=str, required=True)
     args = parser.parse_args(args.args[1:], namespace=args)
     assert (args.norm_type is not None) == (args.norm_axes is not None)
     assert args.norm_type is None or args.norm_ref is None or 'tool' not in args.norm_axes
@@ -213,16 +218,23 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
         for tag in logs.keys():
             logs[tag] -= ref_mean[tag][ref_slice]
             if args.norm_type == 'zscore':
-                logs[tag] /= ref_std[tag][ref_slice] + np.finfo(float).eps
-                logs[tag] = np.maximum(np.minimum(logs[tag], 4), -4)
+                logs[tag] /= np.maximum(ref_std[tag][ref_slice], .01)
 
-    summary_axes = sorted([dims.index(axis) for axis in args.summary_axes])
-    summary_dim_vals = [dim_val for i, dim_val in enumerate(dim_vals) if i not in summary_axes]
-    means = mean_logs(logs, axes=summary_axes)
-    errors = error_logs(logs, axes=summary_axes)
+    summary = logs
+    for i in range(len(args.summary_action)):
+        logs = summary
+        action = args.summary_action[i]
+        axes = args.summary_axes[i]
+        summary_axes = sorted([dims.index(axis) for axis in axes])
+        summary_dim_vals = [dim_val for i, dim_val in enumerate(dim_vals) if i not in summary_axes]
+        summary = eval(f'{action}_logs')(summary, axes=summary_axes, keep_shape=i < len(args.summary_action) - 1)
+
     name_prefix = 'simple'
-    return ((means, name_prefix + '_means', summary_dim_vals),
-            ((means, errors), name_prefix + '_errors', summary_dim_vals))
+    results = ((summary, name_prefix + '_means', summary_dim_vals),)
+    if action == 'mean':
+        errors = error_logs(logs, axes=summary_axes)
+        results = (results[0], ((summary, errors), name_prefix + '_errors', summary_dim_vals))
+    return results
 
 
 parser = argparse.ArgumentParser()
