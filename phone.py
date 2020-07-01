@@ -6,7 +6,7 @@ import shutil
 import re
 import subprocess
 import time
-from typing import Union, Optional, List, Tuple
+from typing import Union, Optional, List, Tuple, Callable, Any
 
 import matplotlib.image as mpimg
 import numpy as np
@@ -63,6 +63,14 @@ class Phone:
             os.makedirs(f'{self.screenshots_dir}/.tmp-{device_name}')
         self.step = 0
         self.visited_activities = set()
+        self.action_metadata_callbacks = []
+
+    def add_action_metadata_callback(self, callback: Callable) -> None:
+        self.action_metadata_callbacks.append(callback)
+
+    def send_action_metadata(self, metadata: Any) -> None:
+        for callback in self.action_metadata_callbacks:
+            callback(metadata)
 
     def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
         command = f'{self.adb_path} -s emulator-{self.port} {command}'
@@ -311,22 +319,25 @@ class Phone:
             self.adb(f'emu event mouse {x} {y} 0 1')
             res = self.screenshot()
             self.adb(f'emu event mouse {x} {y} 0 0')
+            self.send_action_metadata(None)
             return res
         if type == 1:
             up_scroll = random.uniform(0, 1) > .5
+            val = self.scroll_constant * (-1) ** up_scroll
             print(f'{datetime.now()}: phone {self.device_name}: scroll {"up" if up_scroll else "down"} on {x},{y}')
-            for _y in range(y, y + self.scroll_constant * (-1) ** up_scroll,
-                            self.scroll_constant // self.scroll_event_count * (-1) ** up_scroll):
+            for _y in range(y, y + val, val // self.scroll_event_count):
                 self.adb(f'emu event mouse {x} {_y} 0 1')
             self.adb(f'emu event mouse {x} {_y} 0 0')
+            self.send_action_metadata(val)
             return None
         if type == 2:
             left_scroll = random.uniform(0, 1) > .5
+            val = self.scroll_constant * (-1) ** left_scroll
             print(f'{datetime.now()}: phone {self.device_name}: swipe {"left" if left_scroll else "right"} on {x},{y}')
-            for _x in range(x, x + self.scroll_constant * (-1) ** left_scroll,
-                            self.scroll_constant // self.scroll_event_count * (-1) ** left_scroll):
+            for _x in range(x, x + val, val // self.scroll_event_count):
                 self.adb(f'emu event mouse {_x} {y} 0 1')
             self.adb(f'emu event mouse {_x} {y} 0 0')
+            self.send_action_metadata(val)
             return None
         if type == 3:
             text = ''.join(random.choices(string.ascii_letters + string.digits,
@@ -335,6 +346,7 @@ class Phone:
             # self.adb(f'emu event mouse {x} {y} 0 1')
             # self.adb(f'emu event mouse {x} {y} 0 0')
             self.adb(f'emu event text {text}')
+            self.send_action_metadata(text)
             return None
         raise NotImplementedError()
 

@@ -808,7 +808,6 @@ class CollectorLogger(EnvironmentCallbacks):
         self.log_reward_prediction = cfg['log_reward_prediction']
         self.steps_per_app = cfg['steps_per_app']
         self.chunk_start = cfg['chunk_start']
-        self.scroll_constant = cfg['scroll_constant']
         self.environment = None
 
         assert self.coverage_log_frequency % self.scalar_log_frequency == 0
@@ -821,6 +820,7 @@ class CollectorLogger(EnvironmentCallbacks):
         self.rewards = []
         self.activity_count = []
         self.action = None
+        self.action_metadata = None
         self.preprocessed_screen = None
         self.prediction = None
         self.clustering = None
@@ -848,6 +848,7 @@ class CollectorLogger(EnvironmentCallbacks):
     def set_environment(self, environment: RelevantActionEnvironment):
         self.environment = environment
         self.environment.add_on_crash_callback(self.on_crash)
+        self.environment.phone.add_action_metadata_callback(self.on_action_metadata)
 
     def get_dependencies(self) -> List[tf.Tensor]:
         return self.dependencies
@@ -866,6 +867,9 @@ class CollectorLogger(EnvironmentCallbacks):
         self.log_scalar('Crashes', 0)
         self.log_scalar('Crashes', 1)
         self.log_scalar('Crashes', 0)
+
+    def on_action_metadata(self, metadata: Any) -> None:
+        self.action_metadata = metadata
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.local_step += 1
@@ -947,13 +951,17 @@ class CollectorLogger(EnvironmentCallbacks):
         if self.action[-1] == 0:
             screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
         elif self.action[-1] == 1:
-            screen[max(0, action_p[0] - 3):action_p[0] + 3,
-            max(0, action_p[1] - self.scroll_constant // 2):action_p[1] + self.scroll_constant // 2] \
+            diff = self.action_metadata
+            screen[action_p[0]:max(0, action_p[0] + diff):diff // abs(diff), max(0, action_p[1] - 3):action_p[1] + 3] \
                 = [255, 0, 0]
+            screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [0, 0, 255]
         elif self.action[-1] == 2:
-            screen[max(0, action_p[0] - self.scroll_constant // 2):action_p[0] + self.scroll_constant // 2,
-            max(0, action_p[1] - 3):action_p[1] + 3] = [255, 0, 0]
+            diff = self.action_metadata
+            screen[max(0, action_p[0] - 3):action_p[0] + 3, action_p[1]:max(0, action_p[1] + diff):diff // abs(diff)] \
+                = [255, 0, 0]
+            screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [0, 0, 255]
         elif self.action[-1] == 3:
+            text = self.action_metadata
             screen[max(0, action_p[0] - 3):action_p[0] + 3, max(0, action_p[1] - 3):action_p[1] + 3] = [0, 0, 255]
         else:
             raise NotImplementedError('Unsupported action.')
@@ -1197,7 +1205,6 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
     adb_path = phone_configs['adb_path']
-    scroll_constant = phone_configs['scroll_constant']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -1222,7 +1229,6 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     learner_configs['logs_dir'] = logs_dir
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
-    collector_logger_configs['scroll_constant'] = scroll_constant
     reward_predictor_configs['prediction_shape'] = prediction_shape
     monkey_client_configs = {'adb_path': adb_path}
 
