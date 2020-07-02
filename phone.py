@@ -24,7 +24,8 @@ class Phone:
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
         self.install_wait_time = cfg['install_wait_time']
-        self.app_start_wait_time = cfg['app_start_wait_time']
+        self.app_start_max_wait_time = cfg['app_start_max_wait_time']
+        self.after_app_start_wait_time = cfg['after_app_start_wait_time']
         self.app_exit_wait_time = cfg['app_exit_wait_time']
         self.phone_boot_wait_time = cfg['phone_boot_wait_time']
         self.snapshot_load_wait_time = cfg['snapshot_load_wait_time']
@@ -45,7 +46,8 @@ class Phone:
         self.current_activity_regex = cfg['current_activity_regex']
         self.is_in_app_grep = cfg['is_in_app_grep']
         self.is_in_app_regex = cfg['is_in_app_regex']
-        self.scroll_constant = cfg['scroll_constant']
+        self.scroll_min_value = cfg['scroll_min_value']
+        self.scroll_max_value = cfg['scroll_max_value']
         self.scroll_event_count = cfg['scroll_event_count']
         self.keyboard_text_max_length = cfg['keyboard_text_max_length']
         self.install_apks = cfg['install_apks']
@@ -72,8 +74,9 @@ class Phone:
         for callback in self.action_metadata_callbacks:
             callback(metadata)
 
-    def adb(self, command: str, as_bytes: bool = False) -> Union[str, bytes]:
-        command = f'{self.adb_path} -s emulator-{self.port} {command}'
+    def adb(self, command: str, as_bytes: bool = False, timeout: int = None) -> Union[str, bytes]:
+        command = f'{"" if timeout is None else ("timeout " + str(timeout) + "s ")}' \
+                  f'{self.adb_path} -s emulator-{self.port} {command}'
         res = subprocess.check_output(command, shell=True)
         if not as_bytes:
             return res.decode('utf-8')
@@ -299,8 +302,9 @@ class Phone:
         print(f'{datetime.now()}: opening {app_name} in {self.device_name}')
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
-        self.adb(f'shell am start -W -n {self.app_activity_dict[app_name]}')
-        time.sleep(self.app_start_wait_time)
+        # timeout here does NOT kill the process. but I could not find a better way.
+        self.adb(f'shell am start -S -W -n {self.app_activity_dict[app_name]}', timeout=self.app_start_max_wait_time)
+        time.sleep(self.after_app_start_wait_time)
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         if self.maintain_visited_activities and perform_checks:
@@ -323,7 +327,7 @@ class Phone:
             return res
         if type == 1:
             up_scroll = random.uniform(0, 1) > .5
-            val = self.scroll_constant * (-1) ** up_scroll
+            val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** up_scroll
             print(f'{datetime.now()}: phone {self.device_name}: scroll {"up" if up_scroll else "down"} on {x},{y}')
             for _y in range(y, y + val, val // self.scroll_event_count):
                 self.adb(f'emu event mouse {x} {_y} 0 1')
@@ -332,7 +336,7 @@ class Phone:
             return None
         if type == 2:
             left_scroll = random.uniform(0, 1) > .5
-            val = self.scroll_constant * (-1) ** left_scroll
+            val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** left_scroll
             print(f'{datetime.now()}: phone {self.device_name}: swipe {"left" if left_scroll else "right"} on {x},{y}')
             for _x in range(x, x + val, val // self.scroll_event_count):
                 self.adb(f'emu event mouse {_x} {y} 0 1')
