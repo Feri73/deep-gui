@@ -1095,7 +1095,7 @@ class PredictionClusterer:
             all_valid_clusters_nums.append([])
             preds = preds_old[0, :, :, type]
             clickables = tf.cast(tf.where(preds > clickable_threshold), tf.int32)
-            if len(clickables) == 0:
+            if len(clickables) == 0 or len(clickables) == 1:
                 all_clickables[-1] = clickables
                 continue
             clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=self.distance_threshold,
@@ -1207,6 +1207,9 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
     adb_path = phone_configs['adb_path']
+    scroll_min_value = phone_configs['scroll_min_value']
+    scroll_max_value = phone_configs['scroll_max_value']
+    scroll_event_count = phone_configs['scroll_event_count']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
     batch_size = learner_configs['batch_size'] if is_learner else 1
@@ -1232,7 +1235,8 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
-    monkey_client_configs = {'adb_path': adb_path}
+    monkey_client_configs = {'adb_path': adb_path, 'scroll_min_value': scroll_min_value,
+                             'scroll_max_value': scroll_max_value, 'scroll_event_count': scroll_event_count}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)

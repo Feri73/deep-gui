@@ -1,3 +1,4 @@
+import random
 from datetime import datetime
 import os
 import time
@@ -21,6 +22,9 @@ class RelevantActionMonkeyClient(Environment):
         self.adb_port = adb_port
 
         self.adb_path = cfg['adb_path']
+        self.scroll_min_value = cfg['scroll_min_value']
+        self.scroll_max_value = cfg['scroll_max_value']
+        self.scroll_event_count = cfg['scroll_event_count']
 
         self.socket = None
         self.connected = False
@@ -78,16 +82,35 @@ class RelevantActionMonkeyClient(Environment):
         return self.finished
 
     def act(self, action: Any, wait_action: Callable) -> float:
-        if action[2] != 0:
-            raise NotImplementedError()
+        type = action[2]
         action = self.action2pos(action)
-        print(f'{datetime.now()}: sending click on {action[0]}, {action[1]} to {self.server_port}')
-        # read the output of monkey here: should be OK
-        self.socket.send(f'touch down {action[0]} {action[1]}\n'.encode())
-        self.socket.send(f'touch up {action[0]} {action[1]}\n'.encode())
+        if type == 0:
+            print(f'{datetime.now()}: sending click on {action[0]}, {action[1]} to {self.server_port}')
+            # read the output of monkey here: should be OK
+            self.socket.send(f'touch down {action[0]} {action[1]}\n'.encode())
+            self.socket.send(f'touch up {action[0]} {action[1]}\n'.encode())
+        elif type == 1:
+            up_scroll = random.uniform(0, 1) > .5
+            val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** up_scroll
+            x, y = action[0], action[1]
+            print(f'{datetime.now()}: phone {self.server_port}: scroll {"up" if up_scroll else "down"} on {x},{y}')
+            self.socket.send(f'touch down {x} {y}\n'.encode())
+            for _y in range(y + val // self.scroll_event_count, y + val, val // self.scroll_event_count):
+                self.socket.send(f'touch move {x} {_y}\n'.encode())
+            self.socket.send(f'touch up {x} {_y}\n'.encode())
+        elif type == 2:
+            left_scroll = random.uniform(0, 1) > .5
+            val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** left_scroll
+            x, y = action[0], action[1]
+            print(f'{datetime.now()}: phone {self.server_port}: swipe {"left" if left_scroll else "right"} on {x},{y}')
+            self.socket.send(f'touch down {x} {y}\n'.encode())
+            for _x in range(x + val // self.scroll_event_count, x + val, val // self.scroll_event_count):
+                self.socket.send(f'touch move {_x} {y}\n'.encode())
+            self.socket.send(f'touch up {_x} {y}\n'.encode())
+        else:
+            raise NotImplementedError()
         self.socket.send(f'done\n'.encode())
         self.disconnect()
         self.current_state = None
         wait_action()
         return 0
-
