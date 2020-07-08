@@ -992,8 +992,8 @@ class CollectorLogger(EnvironmentCallbacks):
                             y, x = tuple(cluster[0][:2] * new_size // prev_size)
                             pred[y:y + self.cluster_color_size, x:x + self.cluster_color_size] \
                                 = cluster_colors[cl_ind[0]]
-            type_x = type % (final_pred_size[0] // new_size[0])
-            type_y = type // (final_pred_size[1] // new_size[1])
+            type_x = type // (final_pred_size[1] // new_size[1])
+            type_y = type % (final_pred_size[1] // new_size[1])
             final_pred[type_x * new_size[0]:(type_x + 1) * new_size[0], type_y * new_size[1]:
                                                                         (type_y + 1) * new_size[1]] = pred
         self.log_image('Predictions', final_pred)
@@ -1096,6 +1096,7 @@ class PredictionClusterer:
             preds = preds_old[0, :, :, type]
             clickables = tf.cast(tf.where(preds > clickable_threshold), tf.int32)
             if len(clickables) == 0:
+                all_clickables[-1] = clickables
                 continue
             clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=self.distance_threshold,
                                                 compute_full_tree=True, linkage='single')
@@ -1103,6 +1104,7 @@ class PredictionClusterer:
             clusters_nums, clusters_counts = np.unique(clusters, axis=0, return_counts=True)
             valid_clusters_nums = clusters_nums[clusters_counts >= self.cluster_count_threshold]
             if len(valid_clusters_nums) == 0:
+                all_clickables[-1] = clickables
                 continue
             all_clickables[-1] = clickables
             all_clusters[-1] = clusters

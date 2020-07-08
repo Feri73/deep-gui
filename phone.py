@@ -75,8 +75,9 @@ class Phone:
             callback(metadata)
 
     def adb(self, command: str, as_bytes: bool = False, timeout: int = None) -> Union[str, bytes]:
-        command = f'{"" if timeout is None else ("timeout " + str(timeout) + "s ")}' \
-                  f'{self.adb_path} -s emulator-{self.port} {command}'
+        command = f'{"" if timeout is None else ("(timeout " + str(timeout) + "s ")}' \
+                  f'{self.adb_path} -s emulator-{self.port} {command}' \
+                  f'{"" if timeout is None else "; exit 0)"}'
         res = subprocess.check_output(command, shell=True)
         if not as_bytes:
             return res.decode('utf-8')
@@ -191,7 +192,7 @@ class Phone:
         if self.unlock:
             self.adb('shell input keyevent 82')
         if self.disable_input_methods:
-            for input_method in self.adb('shell ime list -s').split(os.linesep)[:-1]:
+            for input_method in self.adb('shell ime list -s').replace('\r', '').split('\n')[:-1]:
                 self.adb(f'shell ime disable {input_method}')
         # if os.path.exists(ref_snapshot_path):
         #     if not os.path.exists(local_snapshot_path):
@@ -303,7 +304,7 @@ class Phone:
         if app_name not in self.app_activity_dict:
             self.add_app_activity(app_name)
         # timeout here does NOT kill the process. but I could not find a better way.
-        self.adb(f'shell am start -S -W -n {self.app_activity_dict[app_name]}', timeout=self.app_start_max_wait_time)
+        self.adb(f'shell am start -W -n {self.app_activity_dict[app_name]}', timeout=self.app_start_max_wait_time)
         time.sleep(self.after_app_start_wait_time)
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
