@@ -1032,33 +1032,25 @@ def most_probable_weighted_policy_user(logits: tf.Tensor) -> tf.Tensor:
 
 
 def better_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
+    preds = preds * action_prob_coeffs_tensor
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
     return index_to_action(most_probable_weighted_policy_user(preds_f), preds)
 
 
 def worse_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
-    preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    return index_to_action(
-        most_probable_weighted_policy_user(1 - preds_f), preds)
+    return better_reward_to_action(-preds + 1)
 
 
 def least_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
-    preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    return index_to_action(
-        most_probable_weighted_policy_user(.5 - tf.abs(.5 - preds_f)), preds)
+    return better_reward_to_action(.5 - tf.abs(-preds + .5))
 
 
 def most_certain_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
-    preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    return index_to_action(
-        most_probable_weighted_policy_user(tf.abs(.5 - preds_f)), preds)
+    return better_reward_to_action(tf.abs(-preds + .5))
 
 
 def random_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
-    preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
-    return index_to_action(tf.argmax(
-        tf.distributions.Multinomial(1.0, probs=tf.ones_like(preds_f) /
-                                                tf.cast(tf.shape(preds_f)[-1], tf.float32)).sample(), axis=-1), preds)
+    return better_reward_to_action(tf.ones_like(preds, dtype=tf.float32))
 
 
 class PredictionClusterer:
@@ -1112,7 +1104,11 @@ class PredictionClusterer:
 
         if sum(map(len, all_clusters)) == 0:
             return random_reward_to_action(preds_old)
-        chosen_type = np.random.choice([i for i in range(len(all_clusters)) if len(all_clusters[i]) > 0], 1)[0]
+
+        valid_types = [i for i in range(len(all_clusters)) if len(all_clusters[i]) > 0]
+        valid_type_coeffs = np.array([action_prob_coeffs[i]
+                                      for i in range(len(all_clusters)) if len(all_clusters[i]) > 0])
+        chosen_type = np.random.choice(valid_types, 1, p=valid_type_coeffs / np.sum(valid_type_coeffs))[0]
         valid_clusters_nums = all_valid_clusters_nums[chosen_type]
         clickables = all_clickables[chosen_type]
         clusters = all_clusters[chosen_type]
@@ -1349,10 +1345,12 @@ weights_file = cfg['weights_file']
 prediction_normalizer_name = cfg['prediction_normalizer']
 collector_version_start = cfg['collector_configs']['version_start']
 shuffle_apps = cfg['environment_configs']['shuffle_apps']
+action_prob_coeffs = cfg['action_prob_coeffs']
 
 coordinator_configs['collector_version_start'] = collector_version_start
 
 prediction_normalizer = None if prediction_normalizer_name is None else eval(prediction_normalizer_name)
+action_prob_coeffs_tensor = tf.convert_to_tensor([[[action_prob_coeffs]]])
 
 for clusterer_cfg_name in clusterer_configs:
     if clusterer_cfg_name == 'default':

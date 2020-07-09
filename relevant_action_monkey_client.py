@@ -93,20 +93,22 @@ class RelevantActionMonkeyClient(Environment):
             up_scroll = random.uniform(0, 1) > .5
             val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** up_scroll
             x, y = action[0], action[1]
-            print(f'{datetime.now()}: phone {self.server_port}: scroll {"up" if up_scroll else "down"} on {x},{y}')
+            print(f'{datetime.now()}: sending scroll {"up" if up_scroll else "down"} on {x},{y}'
+                  f'to {self.server_port}')
             self.socket.send(f'touch down {x} {y}\n'.encode())
             for _y in range(y + val // self.scroll_event_count, y + val, val // self.scroll_event_count):
-                self.socket.send(f'touch move {x} {_y}\n'.encode())
-            self.socket.send(f'touch up {x} {_y}\n'.encode())
+                self.socket.send(f'touch move {x} {int(_y)}\n'.encode())
+            self.socket.send(f'touch up {x} {int(_y)}\n'.encode())
         elif type == 2:
             left_scroll = random.uniform(0, 1) > .5
             val = random.randint(self.scroll_min_value, self.scroll_max_value) * (-1) ** left_scroll
             x, y = action[0], action[1]
-            print(f'{datetime.now()}: phone {self.server_port}: swipe {"left" if left_scroll else "right"} on {x},{y}')
+            print(f'{datetime.now()}: sending swipe {"left" if left_scroll else "right"} on {x},{y}'
+                  f'to {self.server_port}')
             self.socket.send(f'touch down {x} {y}\n'.encode())
             for _x in range(x + val // self.scroll_event_count, x + val, val // self.scroll_event_count):
-                self.socket.send(f'touch move {_x} {y}\n'.encode())
-            self.socket.send(f'touch up {_x} {y}\n'.encode())
+                self.socket.send(f'touch move {int(_x)} {y}\n'.encode())
+            self.socket.send(f'touch up {int(_x)} {y}\n'.encode())
         else:
             raise NotImplementedError()
         self.socket.send(f'done\n'.encode())
