@@ -182,6 +182,7 @@ class LearningAgent:
         self.epochs_per_version = cfg['epochs_per_version']
         self.logs_dir = cfg['logs_dir']
         self.save_dir = cfg['save_dir']
+        self.validation_dir = cfg['validation_dir']
         self.save_frequency = cfg['save_frequency']
 
         self.id = id
@@ -239,7 +240,7 @@ class LearningAgent:
         augmented_size = abs(np.subtract(*[len(total_reward_indices[reward]) for reward in total_reward_indices]))
         return less_represented_reward, augmented_size
 
-    def read_episode_files(self, version: Union[int, List[int]]) -> \
+    def read_episode_files(self, directory: str, version: Union[int, List[int]]) -> \
             Tuple[List[EpisodeFile], List[int], List[Dict[np.ndarray, List[int]]], Episode]:
         if not isinstance(version, list):
             version = [version]
@@ -250,7 +251,7 @@ class LearningAgent:
         file_reward_indices_list = []
         meta_files = []
         for v in version:
-            meta_files += glob.glob(f'{self.file_dir}/{v}/*.meta')
+            meta_files += glob.glob(f'{directory}/{v}/*.meta')
         for meta_file in meta_files:
             meta = load_obj(meta_file)
             example_episode = meta['example'] if example_episode is None else \
@@ -261,8 +262,9 @@ class LearningAgent:
 
         return episode_files, file_sizes, file_reward_indices_list, example_episode
 
-    def create_training_data(self, version: Union[int, List[int]]) -> Tuple[Optional[Callable], int]:
-        episode_files, file_sizes, file_reward_indices_list, example_episode = self.read_episode_files(version)
+    def create_training_data(self, directory: str, version: Union[int, List[int]]) -> Tuple[Optional[Callable], int]:
+        episode_files, file_sizes, file_reward_indices_list, example_episode = self.read_episode_files(directory,
+                                                                                                       version)
 
         if len(episode_files) == 0:
             return None, 0
@@ -333,19 +335,21 @@ class LearningAgent:
 
     # add logs
     def learn(self, version: Union[int, List[int]]) -> None:
-        generator, data_size = self.create_training_data(version)
+        generator, data_size = self.create_training_data(self.file_dir, version)
+        validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
         if generator is None:
             print(f'{datetime.now()}: The experience version {version} is not expressive enough to learn from.')
         else:
             print(f'{datetime.now()}: starting learning for experience version {version}')
             data = generator()
+            validation_data = validation_generator()
             steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
             checkpoint_callback = keras.callbacks.ModelCheckpoint(
                 f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' +
-                '{epoch:02d}-{loss:.2f}.hdf5', monitor='loss', save_best_only=False, save_weights_only=True,
-                save_freq=int(self.save_frequency * steps_per_epoch * self.batch_size))
-            self.model.fit(data, epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
-                           callbacks=[checkpoint_callback])
+                '{epoch:02d}-loss_{loss:.2f}-valloss_{val-loss:.2f}.hdf5', monitor='loss', save_best_only=False,
+                save_weights_only=True, save_freq=int(self.save_frequency * steps_per_epoch * self.batch_size))
+            self.model.fit(data, validation_data=validation_data, epochs=int(self.epochs_per_version),
+                           steps_per_epoch=steps_per_epoch, callbacks=[checkpoint_callback])
             del data
 
 
@@ -923,7 +927,8 @@ class CollectorLogger(EnvironmentCallbacks):
             if self.summary_writer is not None:
                 self.summary_writer.close()
             self.summary_writer = tf.summary.FileWriter(f'{self.dir}/{self.name}_chunk_{chunk}')
-            print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}.')
+            print(f'{datetime.now()}: Changed log file to chunk {chunk} for {self.name}. '
+                  f'Current app is {self.environment.get_current_app()}')
         if self.local_step % self.steps_per_app == 0:
             self.log_scalar('Crashes', 0)
             self.log_scalar('Coverage/Class', 0.0)
@@ -1032,7 +1037,7 @@ def most_probable_weighted_policy_user(logits: tf.Tensor) -> tf.Tensor:
 
 
 def better_reward_to_action(preds: tf.Tensor) -> tf.Tensor:
-    preds = preds * action_prob_coeffs_tensor
+    preds = preds * action_prob_coeffs
     preds_f = tf.reshape(preds, (-1, np.prod(preds.shape[1:])))
     return index_to_action(most_probable_weighted_policy_user(preds_f), preds)
 
@@ -1350,7 +1355,6 @@ action_prob_coeffs = cfg['action_prob_coeffs']
 coordinator_configs['collector_version_start'] = collector_version_start
 
 prediction_normalizer = None if prediction_normalizer_name is None else eval(prediction_normalizer_name)
-action_prob_coeffs_tensor = tf.convert_to_tensor([[[action_prob_coeffs]]])
 
 for clusterer_cfg_name in clusterer_configs:
     if clusterer_cfg_name == 'default':
