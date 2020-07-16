@@ -1,6 +1,7 @@
 import glob
 import multiprocessing
 import os
+import random
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -18,6 +19,7 @@ import tensorflow.keras as keras
 import yaml
 from PIL import Image
 from sklearn.cluster import AgglomerativeClustering
+from tensorflow_core.python.keras.callbacks import LambdaCallback
 
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
 from phone import DummyPhone, Phone
@@ -173,7 +175,7 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
 
 
 class LearningAgent:
-    def __init__(self, id: int, model: keras.Model, distorter: Callable, cfg: Config):
+    def __init__(self, id: int, model: keras.Model, iic_distorter: Optional[Callable], cfg: Config):
         self.file_dir = cfg['file_dir']
         self.shuffle = cfg['shuffle']
         self.correct_distributions = cfg['correct_distributions']
@@ -183,12 +185,11 @@ class LearningAgent:
         self.logs_dir = cfg['logs_dir']
         self.save_dir = cfg['save_dir']
         self.validation_dir = cfg['validation_dir']
-        self.save_frequency = cfg['save_frequency']
 
         self.id = id
         # plot the model (maybe here or where it's created)
         self.model = model
-        self.distorter = distorter
+        self.iic_distorter = iic_distorter
 
         # self.log_callback = keras.callbacks.TensorBoard(f'{self.logs_dir}{os.sep}learner_{self.id}')
 
@@ -316,18 +317,37 @@ class LearningAgent:
                          'result': np.zeros((batch_size, *example_episode.result.shape),
                                             dtype=example_episode.result.dtype)}
                     y = np.zeros((batch_size, 1), dtype=np.int32)
+                    if self.iic_distorter is not None:
+                        x['state2'] = x['state'].copy()
+                        x['action2'] = x['action'].copy()
+                        x['result2'] = x['result'].copy()
+                        y2 = np.zeros((batch_size, 1), dtype=np.int32)
+
                     for i in range(batch_size):
                         position = positions[current_positions_i + i]
                         file_i = position[0]
                         data_i = position[1]
                         episode = episode_files[file_i].get(data_i)
-                        episode = self.distorter(episode)
                         x['state'][i] = episode.state
                         x['action'][i] = episode.action
                         x['result'][i] = episode.result
                         y[i][0] = episode.reward
+                        if self.iic_distorter is not None:
+                            episode2, mask, mask2 = self.iic_distorter(episode)
+                            x['state2'][i] = episode2.state
+                            x['action2'][i] = episode2.action
+                            x['result2'][i] = episode2.result
+                            if 'iic_mask' not in x:
+                                x['iic_mask'] = np.zeros((batch_size, *mask.shape), dtype=np.float32)
+                                x['iic_mask2'] = np.zeros((batch_size, *mask.shape), dtype=np.float32)
+                            x['iic_mask'][i] = mask
+                            x['iic_mask2'][i] = mask2
+                            y2[i][0] = episode2.reward
 
-                    yield x, y
+                    if self.iic_distorter is None:
+                        yield x, y
+                    else:
+                        yield x, (y, y2)
 
                     current_positions_i = min(training_size, current_positions_i + self.batch_size) % training_size
 
@@ -337,19 +357,25 @@ class LearningAgent:
     def learn(self, version: Union[int, List[int]]) -> None:
         generator, data_size = self.create_training_data(self.file_dir, version)
         validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
-        if generator is None:
-            print(f'{datetime.now()}: The experience version {version} is not expressive enough to learn from.')
+        if generator is None or validation_generator is None:
+            print(f'{datetime.now()}: The experience version {version} '
+                  f'is not expressive enough to learn/validate from.')
         else:
             print(f'{datetime.now()}: starting learning for experience version {version}')
             data = generator()
             validation_data = validation_generator()
             steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
+            validation_steps = int(validation_data_size / self.batch_size)
             checkpoint_callback = keras.callbacks.ModelCheckpoint(
                 f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' +
-                '{epoch:02d}-loss_{loss:.2f}-valloss_{val-loss:.2f}.hdf5', monitor='loss', save_best_only=False,
-                save_weights_only=True, save_freq=int(self.save_frequency * steps_per_epoch * self.batch_size))
-            self.model.fit(data, validation_data=validation_data, epochs=int(self.epochs_per_version),
-                           steps_per_epoch=steps_per_epoch, callbacks=[checkpoint_callback])
+                '{epoch:02d}-loss_{loss:.2f}-val-loss_{val_loss:.2f}.hdf5',
+                monitor='val_loss', save_best_only=False, save_weights_only=True,
+                save_freq='epoch')
+
+            lambda_callback = LambdaCallback(on_batch_end=lambda epoch, logs: print())
+            self.model.fit(data, validation_data=validation_data, validation_steps=validation_steps,
+                           epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
+                           callbacks=[checkpoint_callback, lambda_callback])
             del data
 
 
@@ -1157,15 +1183,84 @@ def transform_linearly(coord: np.ndarray, ratio: np.ndarray, offset: np.ndarray,
     return res
 
 
+def get_mask(transformed_shape: np.ndarray, mask_top_left: np.ndarray, mask_bottom_right: np.ndarray,
+             transform_coord: Callable) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    top_left = transform_coord(mask_top_left)
+    bottom_right = transform_coord(mask_bottom_right)
+    tl_diff = np.maximum(0, top_left) - top_left
+    br_diff = bottom_right - np.minimum(transformed_shape - 1, bottom_right)
+    return top_left, bottom_right, tl_diff, br_diff
+
+
+def distort_episode_shift(episode: Episode, mask_shape: tuple, shift_max_value: np.ndarray,
+                          action_pos_to_screen_pos: Callable, screen_pos_to_action_pos: Callable) \
+        -> Tuple[Episode, np.ndarray, np.ndarray]:
+    mask_shape = np.array(mask_shape)
+    state_img_shape = np.array(episode.state.shape[:2])
+    state2 = np.zeros(episode.state.shape, episode.state.dtype)
+    shift_neg_max = np.maximum(-episode.action[:2], -shift_max_value)
+    shift_pos_max = np.minimum(state_img_shape - 1 - episode.action[:2], shift_max_value)
+
+    screen_pos = action_pos_to_screen_pos(episode.action[:2])
+
+    while True:
+        action2 = episode.action.copy()
+        shift_val = np.array([np.random.randint(shift_neg_max[0], shift_pos_max[0]),
+                              np.random.randint(shift_neg_max[1], shift_pos_max[1])])
+        screen_pos2 = screen_pos + shift_val
+        action2[:2] = screen_pos_to_action_pos(screen_pos2)
+        if np.any(action2[:2] < 0) or np.any(action2[:2] >= mask_shape[:2]):
+            continue
+        mask_top_left = np.maximum(0, -shift_val)
+        mask2_top_left = np.maximum(0, shift_val)
+        mask_bottom_right = np.minimum(state_img_shape, state_img_shape - shift_val)
+        mask2_bottom_right = np.minimum(state_img_shape, state_img_shape + shift_val)
+        state2[mask2_top_left[0]:mask2_bottom_right[0], mask2_top_left[1]:mask2_bottom_right[1]] = \
+            episode.state[mask_top_left[0]:mask_bottom_right[0], mask_top_left[1]:mask_bottom_right[1]]
+
+        top_left, bottom_right, tl_diff, br_diff = \
+            get_mask(mask_shape[:2], mask_top_left, mask_bottom_right, screen_pos_to_action_pos)
+        top_left2, bottom_right2, tl_diff2, br_diff2 = \
+            get_mask(mask_shape[:2], mask2_top_left, mask2_bottom_right, screen_pos_to_action_pos)
+        top_left = np.ceil(top_left + np.maximum(tl_diff, tl_diff2)).astype(np.int32)
+        top_left2 = np.ceil(top_left2 + np.maximum(tl_diff, tl_diff2)).astype(np.int32)
+        bottom_right = np.ceil(bottom_right - np.maximum(br_diff, br_diff2)).astype(np.int32)
+        bottom_right2 = np.ceil(bottom_right2 - np.maximum(br_diff, br_diff2)).astype(np.int32)
+
+        diff = bottom_right - top_left
+        diff2 = bottom_right2 - top_left2
+        bottom_right = top_left + np.minimum(diff, diff2)
+        bottom_right2 = top_left2 + np.minimum(diff, diff2)
+
+        mask = np.zeros(mask_shape)
+        mask[max(0, top_left[0]): bottom_right[0], max(0, top_left[1]): bottom_right[1]] = 1
+        mask2 = np.zeros(mask_shape)
+        mask2[max(0, top_left2[0]): bottom_right2[0], max(0, top_left2[1]): bottom_right2[1]] = 1
+
+        assert np.sum(mask) == np.sum(mask2)
+        # note that I am not distorting the result here. If I use it I have to distort it too.
+        return Episode(state2, action2, episode.reward.copy(), episode.result), mask, mask2
+
+
 # maybe log some of these
-def distort_episode(episode: Episode, distort_color_probability: float) -> Episode:
+def distort_episode_color(episode: Episode, mask_shape: tuple) -> Tuple[Episode, np.ndarray, np.ndarray]:
     color_order = np.arange(3)
-    if np.random.rand() < distort_color_probability:
-        while np.all(color_order == np.arange(3)):
-            color_order = np.random.permutation(3)
+    while np.all(color_order == np.arange(3)):
+        color_order = np.random.permutation(3)
     state = episode.state.copy()[:, :, color_order]
+    mask = np.ones(mask_shape)
     # note that I am not distorting the result here. If I use it I have to distort it too.
-    return Episode(state, episode.action.copy(), episode.reward.copy(), episode.result.copy())
+    return Episode(state, episode.action.copy(), episode.reward.copy(), episode.result), mask, mask
+
+
+def combine_distort_episode(func_probs: List[Tuple[Callable, float]], mask_shape: tuple) -> Callable:
+    def distort(episode: Episode) -> Episode:
+        for func, p in func_probs:
+            if random.uniform(0, 1) < p:
+                episode = func(episode, mask_shape)
+        return episode
+
+    return distort
 
 
 def control_dependencies(inputs) -> tf.Tensor:
@@ -1176,11 +1271,11 @@ def control_dependencies(inputs) -> tf.Tensor:
 
 
 def linear_combination(funcs: List[Callable], coeffs: List[float] = None) -> Callable:
-    return lambda *inps: sum([c * f(inps) for c, f in zip(coeffs, funcs)])
+    return lambda *inps: sum([c * f(*inps) for c, f in zip(coeffs, funcs)])
 
 
 def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
-    return tf.reduce_mean(tf.reduce_mean(tf.math.reduce_variance(preds, axis=[1, 2]), axis=-1))
+    return tf.reduce_sum(tf.math.reduce_variance(preds, axis=[1, 2, 3]))
 
 
 def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_tester: bool,
@@ -1200,11 +1295,13 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     testers_apks_path = cfg['testers_apks_path']
     collectors_clone_script = cfg['collectors_clone_script']
     testers_clone_script = cfg['testers_clone_script']
-    distort_color_probability = cfg['distort_color_probability']
     reward_predictor = cfg['reward_predictor']
     prediction_shape = cfg['prediction_shape']
     variance_reg_coeff = cfg['variance_reg_coeff']
     l1_reg_coeff = cfg['l1_reg_coeff']
+    iic_coeff = cfg['iic_coeff']
+    iic_distorter_probabilities = cfg['iic_distorter_probabilities']
+    distort_shift_max_value = cfg['distort_shift_max_value']
     use_logger = cfg['use_logger']
     screen_shape = phone_configs['screen_shape']
     adb_path = phone_configs['adb_path']
@@ -1244,6 +1341,16 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     screen_preprocessor_crop_size_a = np.array(screen_preprocessor_crop_size)
     prediction_shape_a = np.array(prediction_shape)
 
+    def to_preprocessed_coord(p):
+        return transform_linearly(p - screen_preprocessor_crop_top_left_a,
+                                  screen_preprocessor_resize_size_a /
+                                  screen_preprocessor_crop_size_a, np.array([0, 0]))
+
+    def screen_pos_to_action_pos(p: np.ndarray) -> np.ndarray:
+        return transform_linearly(to_preprocessed_coord(p),
+                                  prediction_shape_a / screen_preprocessor_resize_size_a,
+                                  np.array([0, 0])) - .5
+
     def action_pos_to_screen_pos(action_p: np.ndarray, dtype=None) -> np.ndarray:
         return transform_linearly(action_p + .5, screen_preprocessor_crop_size_a / prediction_shape_a,
                                   screen_preprocessor_crop_top_left_a, dtype)
@@ -1251,30 +1358,58 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     example_episode = Episode(np.zeros((*screen_shape, 3), np.uint8), np.zeros(3, np.int32),
                               np.zeros((), np.bool), np.zeros((*screen_shape, 3), np.uint8))
 
-    screen_input = keras.layers.Input(example_episode.state.shape, batch_size, name='state',
-                                      dtype=example_episode.state.dtype)
-
     screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs, name='screen_preprocessor')
-    reward_predictor = eval(reward_predictor[0])(action_type_count, 2, reward_predictor_configs,
-                                                 name='reward_predictor')
 
-    predictions = reward_predictor(screen_preprocessor(screen_input))
-
+    regs, coeffs = [], []
     if is_learner:
-        regs, coeffs = [], []
         if variance_reg_coeff != 0:
             regs.append(preds_variance_regularizer)
             coeffs.append(-variance_reg_coeff)
         if l1_reg_coeff != 0:
             regs.append(keras.regularizers.l1(l1_reg_coeff))
             coeffs.append(1)
-        if len(regs) > 0:
-            reward_predictor.activity_regularizer = linear_combination(regs, coeffs)
+
+    reward_predictor = eval(reward_predictor[0])(action_type_count, 2,
+                                                 reward_predictor_configs, name='reward_predictor',
+                                                 activity_regularizer=None if len(regs) == 0
+                                                 else linear_combination(regs, coeffs))
+
+    screen_input = keras.layers.Input(example_episode.state.shape, batch_size, name='state',
+                                      dtype=example_episode.state.dtype)
+    predictions = reward_predictor(screen_preprocessor(screen_input))
+
+    if is_learner:
+        action_sampler = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]),
+                                             name='action_sampler')
         action_input = keras.layers.Input(example_episode.action.shape, batch_size, name='action',
                                           dtype=example_episode.action.dtype)
+        action = action_sampler((predictions, action_input))
         input = (screen_input, action_input)
-        action = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]),
-                                     name='action_sampler')((predictions, action_input))
+
+        if iic_coeff != 0:
+            screen_input2 = keras.layers.Input(example_episode.state.shape, batch_size, name='state2',
+                                               dtype=example_episode.state.dtype)
+            predictions2 = reward_predictor(screen_preprocessor(screen_input2))
+            mask = keras.layers.Input(predictions.shape[1:], batch_size, name='iic_mask', dtype=tf.float32)
+            mask2 = keras.layers.Input(predictions2.shape[1:], batch_size, name='iic_mask2', dtype=tf.float32)
+
+            def iic_loss(both_preds):
+                preds1 = both_preds[:, :, :, :, 0]
+                preds2 = both_preds[:, :, :, :, 1]
+                return tf.reduce_sum(keras.losses.binary_crossentropy(tf.reshape(preds1 * mask, (batch_size, -1)),
+                                                                      tf.reshape(preds2 * mask2, (batch_size, -1))))
+
+            iic_layer = keras.layers.Lambda(
+                lambda both_preds: tf.concat([tf.expand_dims(x, axis=-1) for x in both_preds], axis=-1),
+                activity_regularizer=iic_loss)
+            both_preds = iic_layer((predictions, predictions2))
+
+            predictions2 = keras.layers.Lambda(control_dependencies)((predictions2, [both_preds]))
+
+            action_input2 = keras.layers.Input(example_episode.action.shape, batch_size, name='action2',
+                                               dtype=example_episode.action.dtype)
+            action2 = action_sampler((predictions2, action_input2))
+            input = (*input, screen_input2, action_input2, mask, mask2)
     else:
         input = screen_input
         built_prediction_to_action_options = [prediction_to_action_options[0](agent_clusterer_cfg_name)] + \
@@ -1287,15 +1422,16 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             logger = CollectorLogger(f'{agent_name}_{"tester" if is_tester else "collector"}{id}',
                                      screen_preprocessor.output, reward_predictor.output,
                                      built_prediction_to_action_options[0], action_pos_to_screen_pos,
-                                     lambda p: transform_linearly(p - screen_preprocessor_crop_top_left_a,
-                                                                  screen_preprocessor_resize_size_a /
-                                                                  screen_preprocessor_crop_size_a, np.array([0, 0])),
-                                     collector_logger_configs)
+                                     to_preprocessed_coord, collector_logger_configs)
 
             action = keras.layers.Lambda(control_dependencies,
                                          name='log_dependency_controller')((action, logger.get_dependencies()))
 
-    model = keras.Model(inputs=input, outputs=action)
+    if is_learner and iic_coeff != 0:
+        output = (action, action2)
+    else:
+        output = action
+    model = keras.Model(inputs=input, outputs=output)
 
     if weights_file is not None:
         model.load_weights(weights_file, by_name=True)
@@ -1322,9 +1458,13 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             return env
 
     if is_learner:
-        return LearningAgent(id, model,
-                             partial(distort_episode, distort_color_probability=distort_color_probability),
-                             learner_configs)
+        iic_distorter = combine_distort_episode(
+            list(zip([distort_episode_color, partial(distort_episode_shift,
+                                                     shift_max_value=distort_shift_max_value,
+                                                     action_pos_to_screen_pos=action_pos_to_screen_pos,
+                                                     screen_pos_to_action_pos=screen_pos_to_action_pos)],
+                     iic_distorter_probabilities)), tuple([int(x) for x in predictions.shape[1:]]))
+        return LearningAgent(id, model, None if iic_coeff == 0 else iic_distorter, learner_configs)
     else:
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 
