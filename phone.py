@@ -75,9 +75,15 @@ class Phone:
             callback(metadata)
 
     def adb(self, command: str, as_bytes: bool = False, timeout: int = None) -> Union[str, bytes]:
-        command = f'{"" if timeout is None else ("(timeout " + str(timeout) + "s ")}' \
-                  f'{self.adb_path} -s emulator-{self.port} {command}' \
-                  f'{"" if timeout is None else "; exit 0)"}'
+        if os.name == 'nt':
+            command = f'{self.adb_path} -s emulator-{self.port} {command}'
+            if timeout is not None:
+                title = ''.join(random.choices(string.ascii_letters + string.digits, k=5))
+                command = f'start {command} "{title}" & timeout /t {timeout} & taskkill /fi "WINDOWTITLE eq {title}" /f'
+        else:
+            command = f'{"" if timeout is None else ("(timeout " + str(timeout) + "s ")}' \
+                      f'{self.adb_path} -s emulator-{self.port} {command}' \
+                      f'{"" if timeout is None else "; exit 0)"}'
         res = subprocess.check_output(command, shell=True)
         if not as_bytes:
             return res.decode('utf-8')

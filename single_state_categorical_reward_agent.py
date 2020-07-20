@@ -174,6 +174,83 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
         self.current_episode.reset_value()
 
 
+class TestingAgent(DataCollectionAgent):
+    def __init__(self, id: int, model: keras.Model, learn_model: Optional[keras.Model], example_episode: Episode,
+                 create_environment: Callable[['DataCollectionAgent'], Environment],
+                 iic_distorter: Optional[Callable], cfg: Config):
+        self.learn = cfg['learn']
+        self.weights_file = cfg['weights_file']
+        self.weight_reset_frequency = cfg['weight_reset_frequency']
+
+        max_episodes = cfg['max_episodes']
+        max_file_size = cfg['max_file_size']
+        file_dir = cfg['file_dir']
+        shuffle = cfg['shuffle']
+        correct_distributions = cfg['correct_distributions']
+        augmenting_correction = cfg['augmenting_correction']
+        batch_size = cfg['batch_size']
+        epochs_per_version = cfg['epochs_per_version']
+        meta_save_frequency = max_file_size
+        version_start = 0
+        save_dir = None
+        validation_dir = None
+
+        collection_cfg = {
+            'max_episodes': max_episodes,
+            'max_file_size': max_file_size if self.learn else 0,
+            'meta_save_frequency': meta_save_frequency,
+            'file_dir': file_dir,
+            'version_start': version_start
+        }
+        learning_cfg = {
+            'file_dir': file_dir,
+            'shuffle': shuffle,
+            'correct_distributions': correct_distributions,
+            'augmenting_correction': augmenting_correction,
+            'batch_size': batch_size,
+            'epochs_per_version': epochs_per_version,
+            'save_dir': save_dir,
+            'validation_dir': validation_dir
+        }
+
+        super().__init__(id, model, example_episode, create_environment, collection_cfg)
+
+        self.steps = 0
+        self.most_recent_weights = None
+        self.next_file_valid = True
+
+        self.add_on_file_completed_callbacks(self.on_file_completed)
+
+        if self.learn:
+            self.learning_agent = LearningAgent(id, learn_model, iic_distorter, learning_cfg)
+
+    def reset_file(self, new_file: bool = True):
+        super().reset_file(new_file)
+        self.next_file_valid = True
+
+    def on_file_completed(self, id: int, file_version: int):
+        if self.next_file_valid:
+            self.learning_agent.learn(file_version)
+
+    def update_weights(self, weights: List[tf.Tensor]):
+        super().update_weights(weights)
+        if self.learn:
+            self.most_recent_weights = weights
+
+    def on_episode_start(self, state: np.ndarray) -> None:
+        if self.learn and self.steps % self.weight_reset_frequency == 0:
+            self.next_file_valid = False
+            print(f'{datetime.now()}: resetting weights for tester {self.id} with weights from ', end='')
+            if self.most_recent_weights is not None:
+                print('global learner')
+                self.update_weights(self.most_recent_weights)
+            elif self.weights_file is not None:
+                print('file')
+                self.model.load_weights(self.weights_file, by_name=True)
+        self.steps += 1
+        super().on_episode_start(state)
+
+
 class LearningAgent:
     def __init__(self, id: int, model: keras.Model, iic_distorter: Optional[Callable], cfg: Config):
         self.file_dir = cfg['file_dir']
@@ -182,7 +259,6 @@ class LearningAgent:
         self.augmenting_correction = cfg['augmenting_correction']
         self.batch_size = cfg['batch_size']
         self.epochs_per_version = cfg['epochs_per_version']
-        self.logs_dir = cfg['logs_dir']
         self.save_dir = cfg['save_dir']
         self.validation_dir = cfg['validation_dir']
 
@@ -190,8 +266,6 @@ class LearningAgent:
         # plot the model (maybe here or where it's created)
         self.model = model
         self.iic_distorter = iic_distorter
-
-        # self.log_callback = keras.callbacks.TensorBoard(f'{self.logs_dir}{os.sep}learner_{self.id}')
 
     class EpisodeFileManager:
         def __init__(self, episode_files: List[EpisodeFile]):
@@ -241,7 +315,8 @@ class LearningAgent:
         augmented_size = abs(np.subtract(*[len(total_reward_indices[reward]) for reward in total_reward_indices]))
         return less_represented_reward, augmented_size
 
-    def read_episode_files(self, directory: str, version: Union[int, List[int]]) -> \
+    @staticmethod
+    def read_episode_files(directory: str, version: Union[int, List[int]]) -> \
             Tuple[List[EpisodeFile], List[int], List[Dict[np.ndarray, List[int]]], Episode]:
         if not isinstance(version, list):
             version = [version]
@@ -256,7 +331,7 @@ class LearningAgent:
         for meta_file in meta_files:
             meta = load_obj(meta_file)
             example_episode = meta['example'] if example_episode is None else \
-                self.get_general_example(example_episode, meta['example'])
+                LearningAgent.get_general_example(example_episode, meta['example'])
             episode_files.append(EpisodeFile(meta_file[:-5], meta['max_size'], meta['example'], 'r'))
             file_sizes.append(meta['size'])
             file_reward_indices_list.append(meta['reward_indices'])
@@ -283,20 +358,13 @@ class LearningAgent:
         total_size = sum(file_sizes)
         if self.augmenting_correction:
             training_size = total_size + augmented_size
-            poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
-                                      (total_size - augmented_size) // 2, replace=False)
-            poses1_augment = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
-                                              augmented_size, replace=False)
-            poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
-                                      (total_size - augmented_size) // 2, replace=False)
-            positions = np.concatenate([poses1, poses1_augment, poses2])
         else:
             training_size = total_size - augmented_size
-            poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
-                                      training_size // 2, replace=False)
-            poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
-                                      training_size // 2, replace=False)
-            positions = np.concatenate([poses1, poses2])
+        poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                  training_size // 2, replace=False)
+        poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
+                                  training_size // 2, replace=self.augmenting_correction)
+        positions = np.concatenate([poses1, poses2])
         positions_order = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
         positions = positions[positions_order]
 
@@ -324,7 +392,7 @@ class LearningAgent:
                         y2 = np.zeros((batch_size, 1), dtype=np.int32)
 
                     for i in range(batch_size):
-                        position = positions[current_positions_i + i]
+                        position = positions[(current_positions_i + i) % training_size]
                         file_i = position[0]
                         data_i = position[1]
                         episode = episode_files[file_i].get(data_i)
@@ -349,33 +417,41 @@ class LearningAgent:
                     else:
                         yield x, (y, y2)
 
-                    current_positions_i = min(training_size, current_positions_i + self.batch_size) % training_size
+                    current_positions_i = (current_positions_i + self.batch_size) % training_size
 
-        return generator, training_size
+        return generator, max(training_size, self.batch_size)
 
     # add logs
     def learn(self, version: Union[int, List[int]]) -> None:
         generator, data_size = self.create_training_data(self.file_dir, version)
-        validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
-        if generator is None or validation_generator is None:
-            print(f'{datetime.now()}: The experience version {version} '
+        if self.validation_dir is not None:
+            validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
+        else:
+            validation_generator = None
+            validation_data_size = 0
+        if generator is None or (self.validation_dir is not None and validation_generator is None):
+            print(f'{datetime.now()}: In learner {self.id}, the experience version {version} '
                   f'is not expressive enough to learn/validate from.')
         else:
-            print(f'{datetime.now()}: starting learning for experience version {version}')
+            print(f'{datetime.now()}: starting learning for experience version {version} in learner {self.id}')
             data = generator()
-            validation_data = validation_generator()
+            validation_data = None if validation_generator is None else validation_generator()
             steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
             validation_steps = int(validation_data_size / self.batch_size)
-            checkpoint_callback = keras.callbacks.ModelCheckpoint(
-                f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' +
-                '{epoch:02d}-loss_{loss:.2f}-val-loss_{val_loss:.2f}.hdf5',
-                monitor='val_loss', save_best_only=False, save_weights_only=True,
-                save_freq='epoch')
 
             lambda_callback = LambdaCallback(on_batch_end=lambda epoch, logs: print())
+            callbacks = [lambda_callback]
+            if self.save_dir is not None:
+                checkpoint_callback = keras.callbacks.ModelCheckpoint(
+                    f'{self.save_dir}/{version[-1] if isinstance(version, list) else version}-' +
+                    '{epoch:02d}-loss_{loss:.2f}-val-loss_{val_loss:.2f}.hdf5',
+                    monitor='val_loss', save_best_only=False, save_weights_only=True,
+                    save_freq='epoch')
+                callbacks.append(checkpoint_callback)
+
             self.model.fit(data, validation_data=validation_data, validation_steps=validation_steps,
                            epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
-                           callbacks=[checkpoint_callback, lambda_callback])
+                           callbacks=callbacks)
             del data
 
 
@@ -407,7 +483,7 @@ class Thread(ABC):
 class Coordinator(ABC, EnvironmentCallbacks):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
                  learner_creator: Callable[[], LearningAgent],
-                 tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
+                 tester_creators: List[Callable[[], TestingAgent]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
         self.train = cfg['train']
         self.pre_training = cfg['pre_training']
@@ -438,9 +514,11 @@ class Coordinator(ABC, EnvironmentCallbacks):
     def get_main_thread(self) -> Thread:
         pass
 
-    def start_collector(self, collector_creator: Callable[[], DataCollectionAgent], thread: Thread) -> None:
+    def start_collector(self, collector_creator: Callable[[], DataCollectionAgent],
+                        is_tester: bool, thread: Thread) -> None:
         collector = collector_creator()
-        collector.add_on_file_completed_callbacks(self.on_collector_file_completed)
+        if not is_tester:
+            collector.add_on_file_completed_callbacks(self.on_collector_file_completed)
         collector.environment.add_callback(self)
         self.get_thread_locals().collector = collector
         self.get_thread_locals().thread = thread
@@ -494,9 +572,9 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
     def start(self):
         self.learner_thread = self.get_main_thread()
-        self.collector_threads = [self.create_thread(self.start_collector, c_creator)
+        self.collector_threads = [self.create_thread(self.start_collector, c_creator, False)
                                   for c_creator in self.collector_creators]
-        self.tester_threads = [self.create_thread(self.start_collector, t_creator)
+        self.tester_threads = [self.create_thread(self.start_collector, t_creator, True)
                                for t_creator in self.tester_creators]
         [c_thread.run() for c_thread in self.collector_threads]
         [t_thread.run() for t_thread in self.tester_threads]
@@ -585,10 +663,10 @@ class ScreenPreprocessor(keras.layers.Layer):
         if self.grayscale:
             screens = tf.image.rgb_to_grayscale(screens)
         screens = tf.image.crop_to_bounding_box(screens, *self.crop_top_left, *self.crop_size)
-        screens_shape = tuple([int(d) for d in screens.shape])
+        screens_shape = (None, *[int(d) for d in screens.shape[1:]])
         if screens_shape[1:3] != self.resize_size:
             screens = tf.image.resize(screens, self.resize_size)
-        screens_shape = tuple([int(d) for d in screens.shape])
+        screens_shape = (None, *[int(d) for d in screens.shape[1:]])
         if self.scale_color:
             if screens_shape[-1] != 1:
                 raise AttributeError('cannot scale colored images.')
@@ -1278,12 +1356,15 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
     return tf.reduce_sum(tf.math.reduce_variance(preds, axis=[1, 2, 3]))
 
 
+# if I use anything other than spawn, this might stop working because I am changing the same dictionary reference
+#   in all agents
 def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_tester: bool,
                  agent_option_probs: List[float], agent_clusterer_cfg_name: str,
                  weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
+    tester_configs = cfg['tester_configs']
     screen_preprocessor_configs = cfg['screen_preprocessor_configs']
     phone_configs = cfg['phone_configs']
     collector_logger_configs = cfg['collector_logger_configs']
@@ -1310,26 +1391,31 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     scroll_event_count = phone_configs['scroll_event_count']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
-    batch_size = learner_configs['batch_size'] if is_learner else 1
     screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
     screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
     reward_predictor_configs = cfg[f'{reward_predictor[1]}_reward_predictor_configs']
+    learn_in_tester = tester_configs['learn']
+    learning_rate = tester_configs['learning_rate']
+    batch_size = learner_configs['batch_size'] if is_learner else None if is_tester and learn_in_tester else 1
+    build_learn_model = is_learner or (is_tester and learn_in_tester)
 
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
     environment_configs['steps_per_episode'] = 1
     environment_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     environment_configs['crop_size'] = screen_preprocessor_crop_size
+    if is_tester and learn_in_tester:
+        environment_configs['calculate_reward'] = True
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
     phone_configs['clone_script_path'] = testers_clone_script if is_tester else collectors_clone_script
     collector_configs['file_dir'] = data_file_dir
-    if is_tester:
-        collector_configs['max_file_size'] = 0
     learner_configs['file_dir'] = data_file_dir
-    learner_configs['logs_dir'] = logs_dir
+    tester_configs['file_dir'] = tester_configs['file_dir'] + '/tester' + str(agent_num)
+    tester_configs['weights_file'] = weights_file
+    tester_configs['shuffle'] = True
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
@@ -1361,7 +1447,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs, name='screen_preprocessor')
 
     regs, coeffs = [], []
-    if is_learner:
+    if build_learn_model:
         if variance_reg_coeff != 0:
             regs.append(preds_variance_regularizer)
             coeffs.append(-variance_reg_coeff)
@@ -1378,13 +1464,13 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                                       dtype=example_episode.state.dtype)
     predictions = reward_predictor(screen_preprocessor(screen_input))
 
-    if is_learner:
+    if build_learn_model:
         action_sampler = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]),
                                              name='action_sampler')
         action_input = keras.layers.Input(example_episode.action.shape, batch_size, name='action',
                                           dtype=example_episode.action.dtype)
-        action = action_sampler((predictions, action_input))
-        input = (screen_input, action_input)
+        reward = action_sampler((predictions, action_input))
+        learn_model_input = (screen_input, action_input)
 
         if iic_coeff != 0:
             screen_input2 = keras.layers.Input(example_episode.state.shape, batch_size, name='state2',
@@ -1396,8 +1482,10 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             def iic_loss(both_preds):
                 preds1 = both_preds[:, :, :, :, 0]
                 preds2 = both_preds[:, :, :, :, 1]
-                return tf.reduce_sum(keras.losses.binary_crossentropy(tf.reshape(preds1 * mask, (batch_size, -1)),
-                                                                      tf.reshape(preds2 * mask2, (batch_size, -1))))
+                shape1 = np.prod(preds1.get_shape().as_list()[1:])
+                shape2 = np.prod(preds2.get_shape().as_list()[1:])
+                return tf.reduce_sum(keras.losses.binary_crossentropy(tf.reshape(preds1 * mask, (-1, shape1)),
+                                                                      tf.reshape(preds2 * mask2, (-1, shape2))))
 
             iic_layer = keras.layers.Lambda(
                 lambda both_preds: tf.concat([tf.expand_dims(x, axis=-1) for x in both_preds], axis=-1),
@@ -1408,10 +1496,15 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
 
             action_input2 = keras.layers.Input(example_episode.action.shape, batch_size, name='action2',
                                                dtype=example_episode.action.dtype)
-            action2 = action_sampler((predictions2, action_input2))
-            input = (*input, screen_input2, action_input2, mask, mask2)
-    else:
-        input = screen_input
+            reward2 = action_sampler((predictions2, action_input2))
+            learn_model_input = (*learn_model_input, screen_input2, action_input2, mask, mask2)
+            learn_model_output = (reward, reward2)
+        else:
+            learn_model_output = reward
+
+        learn_model = keras.Model(inputs=learn_model_input, outputs=learn_model_output)
+
+    if not is_learner:
         built_prediction_to_action_options = [prediction_to_action_options[0](agent_clusterer_cfg_name)] + \
                                              prediction_to_action_options[1:]
         action = keras.layers.Lambda(
@@ -1427,16 +1520,21 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             action = keras.layers.Lambda(control_dependencies,
                                          name='log_dependency_controller')((action, logger.get_dependencies()))
 
-    if is_learner and iic_coeff != 0:
-        output = (action, action2)
-    else:
+        input = screen_input
         output = action
-    model = keras.Model(inputs=input, outputs=output)
+        model = keras.Model(inputs=input, outputs=output)
 
     if weights_file is not None:
-        model.load_weights(weights_file, by_name=True)
-    if is_learner:
-        model.compile(optimizer, keras.losses.BinaryCrossentropy())
+        if build_learn_model:
+            learn_model.load_weights(weights_file, by_name=True)
+        if not is_learner:
+            model.load_weights(weights_file, by_name=True)
+    if build_learn_model:
+        if is_tester:
+            optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+        else:
+            optimizer = 'adam'
+        learn_model.compile(optimizer, keras.losses.BinaryCrossentropy())
 
     def action2pos(action: np.ndarray) -> Tuple[int, int, int]:
         pos = action_pos_to_screen_pos(action[:2], np.int32)
@@ -1457,14 +1555,20 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                 logger.set_environment(env)
             return env
 
-    if is_learner:
+    if build_learn_model:
         iic_distorter = combine_distort_episode(
             list(zip([distort_episode_color, partial(distort_episode_shift,
                                                      shift_max_value=distort_shift_max_value,
                                                      action_pos_to_screen_pos=action_pos_to_screen_pos,
                                                      screen_pos_to_action_pos=screen_pos_to_action_pos)],
                      iic_distorter_probabilities)), tuple([int(x) for x in predictions.shape[1:]]))
-        return LearningAgent(id, model, None if iic_coeff == 0 else iic_distorter, learner_configs)
+        iic_distorter = None if iic_coeff == 0 else iic_distorter
+
+    if is_learner:
+        return LearningAgent(id, learn_model, iic_distorter, learner_configs)
+    elif is_tester:
+        return TestingAgent(id, model, learn_model if build_learn_model else None,
+                            example_episode, create_environment, iic_distorter, tester_configs)
     else:
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 
@@ -1475,7 +1579,6 @@ def parse_specs_to_probs_and_ops(specs: Dict, max_len: int) -> List:
                 for spec in specs], [])
 
 
-optimizer = 'adam'
 pos_reward = 1
 neg_reward = 0
 with open('configs.yaml') as f:
