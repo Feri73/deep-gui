@@ -4,7 +4,7 @@ import os
 import random
 import time
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from functools import partial
 from io import BytesIO
@@ -181,6 +181,10 @@ class TestingAgent(DataCollectionAgent):
         self.learn = cfg['learn']
         self.weights_file = cfg['weights_file']
         self.weight_reset_frequency = cfg['weight_reset_frequency']
+        self.version_window = cfg['version_window']
+        past_rewards_window = cfg['past_rewards_window']
+        self.past_rewards_threshold = cfg['past_rewards_threshold']
+        self.loss_threshold = cfg['loss_threshold']
 
         max_episodes = cfg['max_episodes']
         max_file_size = cfg['max_file_size']
@@ -188,6 +192,7 @@ class TestingAgent(DataCollectionAgent):
         shuffle = cfg['shuffle']
         correct_distributions = cfg['correct_distributions']
         augmenting_correction = cfg['augmenting_correction']
+        strict_correction = cfg['strict_correction']
         batch_size = cfg['batch_size']
         epochs_per_version = cfg['epochs_per_version']
         meta_save_frequency = max_file_size
@@ -207,6 +212,7 @@ class TestingAgent(DataCollectionAgent):
             'shuffle': shuffle,
             'correct_distributions': correct_distributions,
             'augmenting_correction': augmenting_correction,
+            'strict_correction': strict_correction,
             'batch_size': batch_size,
             'epochs_per_version': epochs_per_version,
             'save_dir': save_dir,
@@ -218,6 +224,8 @@ class TestingAgent(DataCollectionAgent):
         self.steps = 0
         self.most_recent_weights = None
         self.next_file_valid = True
+        self.first_valid_version = 0
+        self.past_rewards = deque(maxlen=past_rewards_window)
 
         self.add_on_file_completed_callbacks(self.on_file_completed)
 
@@ -230,7 +238,13 @@ class TestingAgent(DataCollectionAgent):
 
     def on_file_completed(self, id: int, file_version: int):
         if self.next_file_valid:
-            self.learning_agent.learn(file_version)
+            past_rewards_sum = sum(self.past_rewards) / len(self.past_rewards)
+            print(f'{datetime.now()}: past rewards sum in tester {self.id} is {past_rewards_sum}.')
+            if past_rewards_sum < self.past_rewards_threshold:
+                self.learning_agent.learn(list(range(max(file_version + 1 - self.version_window,
+                    self.first_valid_version), file_version + 1)), self.loss_threshold)
+        else:
+            self.first_valid_version = file_version + 1
 
     def update_weights(self, weights: List[tf.Tensor]):
         super().update_weights(weights)
@@ -239,8 +253,10 @@ class TestingAgent(DataCollectionAgent):
 
     def on_episode_start(self, state: np.ndarray) -> None:
         if self.learn and self.steps % self.weight_reset_frequency == 0:
-            self.next_file_valid = False
+            if self.steps > 0:
+                self.next_file_valid = False
             print(f'{datetime.now()}: resetting weights for tester {self.id} with weights from ', end='')
+            self.past_rewards.clear() 
             if self.most_recent_weights is not None:
                 print('global learner')
                 self.update_weights(self.most_recent_weights)
@@ -250,6 +266,25 @@ class TestingAgent(DataCollectionAgent):
         self.steps += 1
         super().on_episode_start(state)
 
+    def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
+        self.past_rewards.append(reward)
+        super().on_state_change(src_state, action, dst_state, reward)
+
+
+class EarlyStoppingByLossVal(keras.callbacks.Callback):
+    def __init__(self, monitor, value):
+        super().__init__()
+        self.monitor = monitor
+        self.value = value
+
+    def on_epoch_end(self, epoch, logs={}):
+        current = logs.get(self.monitor)
+        if current is None:
+            raise RuntimeError(f'Early stopping requires {self.monitor} available!')
+
+        if current < self.value:
+            self.model.stop_training = True
+
 
 class LearningAgent:
     def __init__(self, id: int, model: keras.Model, iic_distorter: Optional[Callable], cfg: Config):
@@ -257,6 +292,7 @@ class LearningAgent:
         self.shuffle = cfg['shuffle']
         self.correct_distributions = cfg['correct_distributions']
         self.augmenting_correction = cfg['augmenting_correction']
+        self.strict_correction = cfg['strict_correction']
         self.batch_size = cfg['batch_size']
         self.epochs_per_version = cfg['epochs_per_version']
         self.save_dir = cfg['save_dir']
@@ -303,7 +339,6 @@ class LearningAgent:
     def correct_distribution(total_reward_indices: Dict[np.ndarray, List[int]]) -> Tuple[np.ndarray, int]:
         # i can do this distribution correction by clicking on slightly different positions,
         #   or by re-using from previous versions
-        # is this way of doing this good? because i have the same samples a lot!
         # i can also not have this and instead use weights in keras
 
         if len(total_reward_indices) == 1:
@@ -353,18 +388,31 @@ class LearningAgent:
             augmented_size = 0
 
         if augmented_size == -1:
-            return None, 0
+            if self.strict_correction:
+                return None, 0
+            augmented_size = 0
 
         total_size = sum(file_sizes)
         if self.augmenting_correction:
             training_size = total_size + augmented_size
         else:
             training_size = total_size - augmented_size
-        poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
-                                  training_size // 2, replace=False)
-        poses2 = np.random.choice(np.array(total_reward_indices[less_represented_reward], dtype='int, int'),
-                                  training_size // 2, replace=self.augmenting_correction)
-        positions = np.concatenate([poses1, poses2])
+
+        if self.correct_distributions and augmented_size != 0:
+            poses1 = np.random.choice(np.array(total_reward_indices[more_represented_reward], dtype='int, int'),
+                                      training_size // 2, replace=False)
+            inds = np.array(total_reward_indices[less_represented_reward], dtype='int, int')
+            rem_size = training_size // 2
+            arrs = []
+            while rem_size >= len(inds):
+                arrs.append(inds)
+                rem_size -= len(inds)
+            if rem_size > 0:
+                arrs.append(np.random.choice(inds, rem_size, replace=False))
+            poses2 = np.concatenate(arrs)
+            positions = np.concatenate([poses1, poses2])
+        else:
+            positions = np.concatenate([np.array(inds, dtype='int, int') for inds in total_reward_indices.values()])
         positions_order = np.random.permutation(training_size) if self.shuffle else np.arange(training_size)
         positions = positions[positions_order]
 
@@ -422,7 +470,7 @@ class LearningAgent:
         return generator, max(training_size, self.batch_size)
 
     # add logs
-    def learn(self, version: Union[int, List[int]]) -> None:
+    def learn(self, version: Union[int, List[int]], loss_threshold: int=None) -> None:
         generator, data_size = self.create_training_data(self.file_dir, version)
         if self.validation_dir is not None:
             validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
@@ -448,6 +496,9 @@ class LearningAgent:
                     monitor='val_loss', save_best_only=False, save_weights_only=True,
                     save_freq='epoch')
                 callbacks.append(checkpoint_callback)
+            if loss_threshold is not None:
+                stop_callback = EarlyStoppingByLossVal('loss', loss_threshold)
+                callbacks.append(stop_callback)
 
             self.model.fit(data, validation_data=validation_data, validation_steps=validation_steps,
                            epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
