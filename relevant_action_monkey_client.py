@@ -15,11 +15,13 @@ from utils import Config
 
 class RelevantActionMonkeyClient(Environment):
     def __init__(self, controller: EnvironmentController, action2pos: Callable,
-                 server_port: int, adb_port: int, cfg: Config):
+                 server_port: int, adb_port: int, control_port: Optional[int], control_handler: Callable, cfg: Config):
         super().__init__(controller)
         self.action2pos = action2pos
         self.server_port = server_port
         self.adb_port = adb_port
+        self.control_port = control_port
+        self.control_handler = control_handler
 
         self.adb_path = cfg['adb_path']
         self.scroll_min_value = cfg['scroll_min_value']
@@ -46,8 +48,24 @@ class RelevantActionMonkeyClient(Environment):
             return res.decode('utf-8')
         return res
 
-    def connect(self, expected: Optional[str], blocking: bool = True) -> bool:
+    def connect_control(self):
+        if self.control_port is None:
+            return
+        print(f'{datetime.now()}: probing control port in {self.server_port}.')
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setblocking(False)
+            self.socket.connect(('localhost', self.control_port))
+            data = self.socket.recv(512)
+            if len(data) > 0:
+                self.control_handler(data)
+        except ConnectionRefusedError:
+            pass
+
+    def connect(self, expected: Optional[str], blocking: bool = True, allow_control: bool = True) -> bool:
         while True:
+            if allow_control:
+                self.connect_control()
             try:
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 if not blocking:
@@ -59,7 +77,7 @@ class RelevantActionMonkeyClient(Environment):
                         print(f'{datetime.now()}: received {data} from {self.server_port}')
                         self.connected = True
                         return True
-                    raise NotImplementedError(f'expected ping! got {data}')
+                    raise NotImplementedError(f'expected {expected} got {data}')
                 elif not blocking:
                     return False
             except ConnectionRefusedError:
@@ -139,7 +157,7 @@ class RelevantActionMonkeyClient(Environment):
 
         reward = 0
         if type == 0:
-            while not self.connect('action_done', blocking=False):
+            while not self.connect('action_done', blocking=False, allow_control=False):
                 self.disconnect()
                 shot = self.screenshot()
                 if not self.are_states_equal(shot, self.current_state):
@@ -147,7 +165,7 @@ class RelevantActionMonkeyClient(Environment):
                     break
                 time.sleep(self.screenshots_interval)
         else:
-            self.connect('action_done')
+            self.connect('action_done', allow_control=False)
         shot = self.screenshot()
         if not self.are_states_equal(shot, self.current_state):
             reward = 1

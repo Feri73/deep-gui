@@ -573,10 +573,14 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
         pos = action_pos_to_screen_pos(action[:2], np.int32)
         return pos[1], pos[0], action[2]
 
+    tester_agent_ref = []
+
     def create_environment(collector: DataCollectionAgent) -> Environment:
         if monkey_client_mode:
-            env = RelevantActionMonkeyClient(collector, action2pos, 3000 + agent_num,
-                                             5554 + 2 * agent_num, monkey_client_configs)
+            env = RelevantActionMonkeyClient(collector, action2pos, 3000 + agent_num, 5554 + 2 * agent_num,
+                                             5000 + agent_num if is_tester else None,
+                                             lambda d: tester_agent_ref[0].reset_weights() if d == b'rw\n' else None,
+                                             monkey_client_configs)
             return env
         else:
             phone_type = DummyPhone if dummy_mode else Phone
@@ -603,10 +607,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
         agent = TestingAgent(id, model, learn_model if build_learn_model else None,
                              example_episode, create_environment, iic_distorter, tester_configs)
         if monkey_client_mode:
-            def send_reset_weights(sig, frame):
-                agent.reset_weights()
-
-            signal.signal(signal.SIGUSR1, send_reset_weights)
+            tester_agent_ref.append(agent)
         return agent
     else:
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
