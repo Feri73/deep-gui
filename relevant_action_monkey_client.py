@@ -4,7 +4,7 @@ import os
 import time
 import socket
 import subprocess
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, Optional
 
 import numpy as np
 import matplotlib.image as mpimg
@@ -25,6 +25,12 @@ class RelevantActionMonkeyClient(Environment):
         self.scroll_min_value = cfg['scroll_min_value']
         self.scroll_max_value = cfg['scroll_max_value']
         self.scroll_event_count = cfg['scroll_event_count']
+        self.crop_top_left = cfg['crop_top_left']
+        self.crop_size = cfg['crop_size']
+        self.pos_reward = cfg['pos_reward']
+        self.neg_reward = cfg['neg_reward']
+        self.screenshots_interval = cfg['screenshots_interval']
+        self.global_equality_threshold = cfg['global_equality_threshold']
 
         self.socket = None
         self.connected = False
@@ -40,19 +46,25 @@ class RelevantActionMonkeyClient(Environment):
             return res.decode('utf-8')
         return res
 
-    def connect(self) -> None:
+    def connect(self, expected: Optional[str], blocking: bool = True) -> bool:
         while True:
             try:
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                if not blocking:
+                    self.socket.setblocking(blocking)
                 self.socket.connect(('localhost', self.server_port))
                 data = self.socket.recv(512)
                 if len(data) > 0:
-                    if data == b'OK:ping\n':
-                        print(f'{datetime.now()}: received ping from {self.server_port}')
+                    if expected is None or data == f'OK:{expected}\n'.encode():
+                        print(f'{datetime.now()}: received {data} from {self.server_port}')
                         self.connected = True
-                        return
+                        return True
                     raise NotImplementedError(f'expected ping! got {data}')
+                elif not blocking:
+                    return False
             except ConnectionRefusedError:
+                if not blocking:
+                    return False
                 pass
             print(f'{datetime.now()}: server {self.server_port} is down. trying again in 0.5 seconds.')
             time.sleep(0.5)
@@ -67,19 +79,30 @@ class RelevantActionMonkeyClient(Environment):
 
     def read_state(self) -> np.ndarray:
         if not self.connected:
-            self.connect()
+            self.connect('ping')
         if self.current_state is None:
-            screenshot_dir = os.path.abspath(f'.client_screenshots')
-            screenshot_path = f'{screenshot_dir}/{self.adb_port}.png'
-            self.adb(f'emu screenrecord screenshot {screenshot_path}')
-            print(f'{datetime.now()}: took a screenshot from {self.server_port}')
-            res = mpimg.imread(screenshot_path)[:, :, :-1]
-            self.current_state = (res * 255).astype(np.uint8)
+            self.current_state = self.screenshot()
         return self.current_state
+
+    def screenshot(self) -> np.ndarray:
+        screenshot_dir = os.path.abspath(f'.client_screenshots')
+        screenshot_path = f'{screenshot_dir}/{self.adb_port}.png'
+        self.adb(f'emu screenrecord screenshot {screenshot_path}')
+        print(f'{datetime.now()}: took a screenshot from {self.server_port}')
+        res = mpimg.imread(screenshot_path)[:, :, :-1]
+        return (res * 255).astype(np.uint8)
 
     def is_finished(self) -> bool:
         self.finished = not self.finished
         return self.finished
+
+    def crop_state(self, state: np.ndarray) -> np.ndarray:
+        return state[
+               self.crop_top_left[0]:self.crop_top_left[0] + self.crop_size[0],
+               self.crop_top_left[1]:self.crop_top_left[1] + self.crop_size[1]]
+
+    def are_states_equal(self, s1: np.ndarray, s2: np.ndarray) -> bool:
+        return np.linalg.norm(self.crop_state(s1) - self.crop_state(s2)) <= self.global_equality_threshold
 
     def act(self, action: Any, wait_action: Callable) -> float:
         type = action[2]
@@ -113,6 +136,25 @@ class RelevantActionMonkeyClient(Environment):
             raise NotImplementedError()
         self.socket.send(f'done\n'.encode())
         self.disconnect()
+
+        reward = 0
+        if type == 0:
+            while not self.connect('action_done', blocking=False):
+                self.disconnect()
+                shot = self.screenshot()
+                if not self.are_states_equal(shot, self.current_state):
+                    reward = 1
+                    break
+                time.sleep(self.screenshots_interval)
+        else:
+            self.connect('action_done')
+        shot = self.screenshot()
+        if not self.are_states_equal(shot, self.current_state):
+            reward = 1
+        self.socket.send(f'done\n'.encode())
+        self.disconnect()
+
         self.current_state = None
         wait_action()
-        return 0
+
+        return reward * self.pos_reward + (1 - reward) * self.neg_reward

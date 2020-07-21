@@ -1391,6 +1391,8 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     scroll_event_count = phone_configs['scroll_event_count']
     action_type_count = environment_configs['action_type_count']
     steps_per_app = environment_configs['steps_per_app']
+    screenshots_interval = environment_configs['screenshots_interval']
+    global_equality_threshold = environment_configs['global_equality_threshold']
     screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
     screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
@@ -1420,7 +1422,11 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
     monkey_client_configs = {'adb_path': adb_path, 'scroll_min_value': scroll_min_value,
-                             'scroll_max_value': scroll_max_value, 'scroll_event_count': scroll_event_count}
+                             'scroll_max_value': scroll_max_value, 'scroll_event_count': scroll_event_count,
+                             'crop_top_left': screen_preprocessor_crop_top_left,
+                             'crop_size': screen_preprocessor_crop_size, 'pos_reward': pos_reward,
+                             'neg_reward': neg_reward, 'screenshots_interval': screenshots_interval,
+                             'global_equality_threshold': global_equality_threshold}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
