@@ -1,9 +1,6 @@
 import os
 import pickle
-from typing import Callable, Dict, Any, List, Tuple
-
-import numpy as np
-import tensorflow as tf
+from typing import Callable, Dict, Any, List
 
 Config = Dict[str, Any]
 
@@ -18,19 +15,6 @@ def run_parallel_command(command: str) -> None:
     else:
         command = f'{command} &'
     os.system(command)
-
-
-def count_elements(weights: Tuple[tf.Tensor, ...]) -> int:
-    return sum(w.shape.num_elements() for w in weights)
-
-
-def normalized_columns_initializer(std=1.0):
-    def _initializer(shape, dtype=None, partition_info=None):
-        out = np.random.randn(*shape).astype(np.float32)
-        out *= std / np.sqrt(np.square(out).sum(axis=0, keepdims=True))
-        return tf.constant(out)
-
-    return _initializer
 
 
 class MemVariable:

@@ -3,22 +3,17 @@
 
 # But not these files...
 !.gitignore
-!actor_critic.py
-!coordinators.py
 !environment.py
-!learn_relevant_action.py
 !phone.py
-!reinforcement_learning.py
 !relevant_action.py
-!screen_parsing.py
 !requirements.txt
 !utils.py
-!tf1.py
 !app_downloader.py
-!test_relevant_action.py
-!relevant_action_base.py
-!supervised_learn_relevant_action.py
-!single_step_binary_reward_dqn.py
-!single_state_categorical_reward_agent.py
+!single_state_categorical_reward.py
+!tf_utils.py
+!predictors.py
+!readouts.py
+!parallelism.py
 !analyze_logs.py
 !relevant_action_monkey_client.py
+!main.py
