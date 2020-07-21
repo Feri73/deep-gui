@@ -1,5 +1,7 @@
 import os
 import random
+import signal
+import sys
 from functools import partial
 from io import BytesIO
 from typing import Callable, List, Any, Tuple, Union, Dict
@@ -441,6 +443,8 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     tester_configs['file_dir'] = tester_configs['file_dir'] + '/tester' + str(agent_num)
     tester_configs['weights_file'] = weights_file
     tester_configs['shuffle'] = True
+    if is_tester and monkey_client_mode:
+        tester_configs['weight_reset_frequency'] = None
     collector_logger_configs['dir'] = logs_dir
     collector_logger_configs['steps_per_app'] = steps_per_app
     reward_predictor_configs['prediction_shape'] = prediction_shape
@@ -596,8 +600,14 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     if is_learner:
         return LearningAgent(id, learn_model, iic_distorter, learner_configs)
     elif is_tester:
-        return TestingAgent(id, model, learn_model if build_learn_model else None,
-                            example_episode, create_environment, iic_distorter, tester_configs)
+        agent = TestingAgent(id, model, learn_model if build_learn_model else None,
+                             example_episode, create_environment, iic_distorter, tester_configs)
+        if monkey_client_mode:
+            def send_reset_weights(sig, frame):
+                agent.reset_weights()
+
+            signal.signal(signal.SIGUSR1, send_reset_weights)
+        return agent
     else:
         return DataCollectionAgent(id, model, example_episode, create_environment, collector_configs)
 

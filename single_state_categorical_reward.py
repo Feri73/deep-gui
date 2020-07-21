@@ -240,18 +240,21 @@ class TestingAgent(DataCollectionAgent):
         if self.learn:
             self.most_recent_weights = weights
 
+    def reset_weights(self):
+        if self.steps > 0:
+            self.next_file_valid = False
+        print(f'{datetime.now()}: resetting weights for tester {self.id} with weights from ', end='')
+        self.past_rewards.clear()
+        if self.most_recent_weights is not None:
+            print('global learner')
+            self.update_weights(self.most_recent_weights)
+        elif self.weights_file is not None:
+            print('file')
+            self.model.load_weights(self.weights_file, by_name=True)
+
     def on_episode_start(self, state: np.ndarray) -> None:
-        if self.learn and self.steps % self.weight_reset_frequency == 0:
-            if self.steps > 0:
-                self.next_file_valid = False
-            print(f'{datetime.now()}: resetting weights for tester {self.id} with weights from ', end='')
-            self.past_rewards.clear() 
-            if self.most_recent_weights is not None:
-                print('global learner')
-                self.update_weights(self.most_recent_weights)
-            elif self.weights_file is not None:
-                print('file')
-                self.model.load_weights(self.weights_file, by_name=True)
+        if self.learn and self.weight_reset_frequency is not None and self.steps % self.weight_reset_frequency == 0:
+            self.reset_weights()
         self.steps += 1
         super().on_episode_start(state)
 
