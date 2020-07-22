@@ -230,8 +230,9 @@ class TestingAgent(DataCollectionAgent):
             past_rewards_sum = sum(self.past_rewards) / len(self.past_rewards)
             print(f'{datetime.now()}: past rewards sum in tester {self.id} is {past_rewards_sum}.')
             if past_rewards_sum < self.past_rewards_threshold:
-                self.learning_agent.learn(list(range(max(file_version + 1 - self.version_window,
-                    self.first_valid_version), file_version + 1)), self.loss_threshold)
+                self.learning_agent.learn(list(range(max(
+                    file_version + 1 - self.version_window, self.first_valid_version),
+                    file_version + 1)), self.loss_threshold)
         else:
             self.first_valid_version = file_version + 1
 
@@ -255,12 +256,15 @@ class TestingAgent(DataCollectionAgent):
     def on_episode_start(self, state: np.ndarray) -> None:
         if self.learn and self.weight_reset_frequency is not None and self.steps % self.weight_reset_frequency == 0:
             self.reset_weights()
-        self.steps += 1
         super().on_episode_start(state)
 
     def on_state_change(self, src_state: np.ndarray, action: Any, dst_state: np.ndarray, reward: float) -> None:
         self.past_rewards.append(reward)
         super().on_state_change(src_state, action, dst_state, reward)
+
+    def on_episode_end(self, premature: bool) -> None:
+        self.steps += 1
+        super().on_episode_end(premature)
 
 
 class EarlyStoppingByLossVal(keras.callbacks.Callback):
@@ -462,7 +466,7 @@ class LearningAgent:
         return generator, max(training_size, self.batch_size)
 
     # add logs
-    def learn(self, version: Union[int, List[int]], loss_threshold: int=None) -> None:
+    def learn(self, version: Union[int, List[int]], loss_threshold: int = None) -> None:
         generator, data_size = self.create_training_data(self.file_dir, version)
         if self.validation_dir is not None:
             validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
@@ -630,5 +634,3 @@ class ProcessBasedCoordinator(Coordinator):
 
     def get_main_thread(self) -> Thread:
         return Process(None, None, cfg=self.process_configs, main_process=True)
-
-
