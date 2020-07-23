@@ -144,23 +144,33 @@ def write_logs(logs: Logs, error_logs: Optional[Logs], dim_vals: List[List[str]]
         writer.close()
 
 
-def move_axes_to_end(a: np.ndarray, axes=List[int], inverse: bool = False) -> np.ndarray:
+def move_axes_to_end(a: np.ndarray, axes: List[int], inverse: bool = False) -> np.ndarray:
     if inverse:
         return np.moveaxis(a, [-i - 1 for i in range(len(axes))], axes)
     return np.moveaxis(a, axes, [-i - 1 for i in range(len(axes))])
 
 
-def process_logs(logs: Logs, func: Callable[[np.ndarray], np.ndarray], axes: List[int],
-                 reduce: bool = False, keep_shape: bool = False) -> Logs:
+def process_logs(logs: Logs, func: Callable, axes: List[int],
+                 reduce: bool = False, keep_shape: bool = False, **kwargs) -> Logs:
     """
     :param func: Should retain the ndim of the input
     """
+
+    def reshape(data: np.ndarray) -> Tuple[tuple, np.ndarray]:
+        swapped_data = move_axes_to_end(data, axes)
+        swapped_shape = swapped_data.shape
+        reshaped_data = swapped_data.reshape((*swapped_shape[:-len(axes)], -1))
+        return swapped_shape, reshaped_data
+
     result_logs = {}
     for tag in logs.keys():
-        swapped_log = move_axes_to_end(logs[tag], axes)
-        swapped_shape = swapped_log.shape
-        reshaped_log = swapped_log.reshape((*swapped_shape[:-len(axes)], -1))
-        result_log = func(reshaped_log)
+        swapped_shape, reshaped_log = reshape(logs[tag])
+        p_kwargs = {}
+        for params_name in kwargs:
+            params = kwargs[params_name]
+            _, p_reshaped_log = reshape(np.ones_like(logs[tag]) * params[tag])
+            p_kwargs[params_name] = p_reshaped_log
+        result_log = func(reshaped_log, **p_kwargs)
         if reduce:
             swapped_shape = (*swapped_shape[:-len(axes)],) + (1,) * len(axes)
         result_logs[tag] = result_log.reshape(swapped_shape)
@@ -171,25 +181,59 @@ def process_logs(logs: Logs, func: Callable[[np.ndarray], np.ndarray], axes: Lis
     return result_logs
 
 
-def zscore_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
+def nanwmean(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
+    weights = np.ones_like(array) * weights
+    array = array.copy()
+    inds = np.isnan(array)
+    array[inds] = 0
+    weights[inds] = 0.0000001
+    return np.average(array, axis=axis, weights=weights)
+
+
+def nanwstd(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
+    avg = nanwmean(array, weights, axis)
+    return nanwmean((array - np.expand_dims(avg, axis=axis)) ** 2, weights, axis) ** .5
+
+
+def nanwerror(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
+    weights = np.ones_like(array) * weights
+    inds = np.isnan(array)
+    weights[inds] = 0.0000001
+    return nanwstd(array, weights, axis) / np.sum(weights, axis=-1) ** .5
+
+
+def zscore_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
     return process_logs(logs, partial(stats.zscore, axis=-1, nan_policy='omit'), axes, **kwargs)
 
 
-def max_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
+def max_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
     return process_logs(logs, partial(np.nanmax, axis=-1), axes=axes, reduce=True, **kwargs)
 
 
-def mean_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
-    return process_logs(logs, partial(np.nanmean, axis=-1), axes=axes, reduce=True, **kwargs)
+def range_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
+    return process_logs(logs, lambda a: np.maximum(0.00001, np.nanmax(a, axis=-1) - np.nanmin(a, axis=-1)), axes=axes, reduce=True, **kwargs)
 
 
-def std_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
-    return process_logs(logs, partial(np.nanstd, axis=-1), axes=axes, reduce=True, **kwargs)
+def mean_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
+    if weights is None:
+        return process_logs(logs, partial(np.nanmean, axis=-1), axes=axes, reduce=True, **kwargs)
+    else:
+        return process_logs(logs, partial(nanwmean, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
 
 
-def error_logs(logs: Logs, axes=List[int], **kwargs) -> Logs:
-    return process_logs(logs, lambda a: np.nanstd(a, axis=-1) / np.count_nonzero(~np.isnan(a), axis=-1) ** .5,
-                        axes=axes, reduce=True, **kwargs)
+def std_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
+    if weights is None:
+        return process_logs(logs, partial(np.nanstd, axis=-1), axes=axes, reduce=True, **kwargs)
+    else:
+        return process_logs(logs, partial(nanwstd, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
+
+
+def error_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
+    if weights is None:
+        return process_logs(logs, lambda a: np.nanstd(a, axis=-1) / np.count_nonzero(~np.isnan(a), axis=-1) ** .5,
+                            axes=axes, reduce=True, **kwargs)
+    else:
+        return process_logs(logs, partial(nanwerror, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
 
 
 def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
@@ -199,6 +243,8 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser.add_argument('--norm-axes', action='store', nargs='+', type=str)
     parser.add_argument('--summary-action', action='append', type=str, required=True)
     parser.add_argument('--summary-axes', action='append', nargs='+', type=str, required=True)
+    # only one param per action is supported for now
+    parser.add_argument('--summary-param', action='append', type=str)
     args = parser.parse_args(args.args[1:], namespace=args)
     assert (args.norm_type is not None) == (args.norm_axes is not None)
     assert args.norm_type is None or args.norm_ref is None or 'tool' not in args.norm_axes
@@ -225,14 +271,23 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
         logs = summary
         action = args.summary_action[i]
         axes = args.summary_axes[i]
+        if args.summary_param is not None:
+            params = args.summary_param[i]
+            p_name, p_action, *p_axes = tuple(params.split('-'))
+            p_axes = sorted([dims.index(axis) for axis in p_axes])
+            p_val = eval(f'{p_action}_logs')(summary, axes=p_axes, keep_shape=True)
+            p_dict = {p_name: p_val}
+        else:
+            p_dict = {}
         summary_axes = sorted([dims.index(axis) for axis in axes])
         summary_dim_vals = [dim_val for i, dim_val in enumerate(dim_vals) if i not in summary_axes]
-        summary = eval(f'{action}_logs')(summary, axes=summary_axes, keep_shape=i < len(args.summary_action) - 1)
+        summary = eval(f'{action}_logs')(summary, axes=summary_axes, keep_shape=i < len(args.summary_action) - 1,
+                                         **p_dict)
 
     name_prefix = 'simple'
     results = ((summary, name_prefix + '_means', summary_dim_vals),)
     if action == 'mean':
-        errors = error_logs(logs, axes=summary_axes)
+        errors = error_logs(logs, axes=summary_axes, **p_dict)
         results = (results[0], ((summary, errors), name_prefix + '_errors', summary_dim_vals))
     return results
 
@@ -264,3 +319,4 @@ for all_logs, name, dim_vals in results:
         logs, errors = all_logs, None
     name = f'{name}_{args.name}' if args.name is not None else name
     write_logs(logs, errors, dim_vals, args.logs_dir, name)
+
