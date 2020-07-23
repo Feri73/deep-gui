@@ -34,6 +34,7 @@ class RelevantActionMonkeyClient(Environment):
         self.neg_reward = cfg['neg_reward']
         self.screenshots_interval = cfg['screenshots_interval']
         self.global_equality_threshold = cfg['global_equality_threshold']
+        self.calculate_reward = cfg['calculate_reward']
 
         self.socket = None
         self.control_socket = None
@@ -194,7 +195,7 @@ class RelevantActionMonkeyClient(Environment):
         self.connect()
         reward = 0
         try:
-            if type == 0:
+            if type == 0 and self.calculate_reward:
                 while not self.receive('action_done', blocking=False):
                     shot = self.screenshot()
                     if not self.are_states_equal(shot, self.current_state):
@@ -208,12 +209,15 @@ class RelevantActionMonkeyClient(Environment):
             # I assume it is a ping
             self.pinged = True
             raise
-        shot = self.screenshot()
-        if not self.are_states_equal(shot, self.current_state):
-            reward = 1
+        if self.calculate_reward:
+            shot = self.screenshot()
+            if not self.are_states_equal(shot, self.current_state):
+                reward = 1
+            self.current_state = shot
+        else:
+            reward = .5
         self.disconnect()
 
-        self.current_state = shot
         wait_action()
 
         return reward * self.pos_reward + (1 - reward) * self.neg_reward

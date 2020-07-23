@@ -418,6 +418,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     steps_per_app = environment_configs['steps_per_app']
     screenshots_interval = environment_configs['screenshots_interval']
     global_equality_threshold = environment_configs['global_equality_threshold']
+    calculate_reward = environment_configs['calculate_reward']
     screen_preprocessor_resize_size = screen_preprocessor_configs['resize_size']
     screen_preprocessor_crop_top_left = screen_preprocessor_configs['crop_top_left']
     screen_preprocessor_crop_size = screen_preprocessor_configs['crop_size']
@@ -434,6 +435,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     environment_configs['crop_size'] = screen_preprocessor_crop_size
     if is_tester and learn_in_tester:
         environment_configs['calculate_reward'] = True
+        calculate_reward = True
     phone_configs['crop_top_left'] = screen_preprocessor_crop_top_left
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
@@ -453,7 +455,8 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                              'crop_top_left': screen_preprocessor_crop_top_left,
                              'crop_size': screen_preprocessor_crop_size, 'pos_reward': pos_reward,
                              'neg_reward': neg_reward, 'screenshots_interval': screenshots_interval,
-                             'global_equality_threshold': global_equality_threshold}
+                             'global_equality_threshold': global_equality_threshold,
+                             'environment_configs': calculate_reward}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)

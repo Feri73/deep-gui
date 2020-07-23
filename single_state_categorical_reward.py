@@ -228,7 +228,8 @@ class TestingAgent(DataCollectionAgent):
     def on_file_completed(self, id: int, file_version: int):
         if self.next_file_valid:
             past_rewards_sum = sum(self.past_rewards) / len(self.past_rewards)
-            print(f'{datetime.now()}: past rewards sum in tester {self.id} is {past_rewards_sum}.')
+            print(f'{datetime.now()}: past {len(self.past_rewards)} rewards sum '
+                  f'in tester {self.id} is {past_rewards_sum}.')
             if past_rewards_sum < self.past_rewards_threshold:
                 self.learning_agent.learn(list(range(max(
                     file_version + 1 - self.version_window, self.first_valid_version),
