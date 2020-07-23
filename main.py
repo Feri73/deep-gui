@@ -456,7 +456,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                              'crop_size': screen_preprocessor_crop_size, 'pos_reward': pos_reward,
                              'neg_reward': neg_reward, 'screenshots_interval': screenshots_interval,
                              'global_equality_threshold': global_equality_threshold,
-                             'environment_configs': calculate_reward}
+                             'calculate_reward': calculate_reward}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)
