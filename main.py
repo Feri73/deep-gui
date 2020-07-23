@@ -607,8 +607,8 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     if is_learner:
         return LearningAgent(id, learn_model, iic_distorter, learner_configs)
     elif is_tester:
-        agent = TestingAgent(id, model, learn_model if build_learn_model else None,
-                             example_episode, create_environment, iic_distorter, tester_configs)
+        agent = TestingAgent(id, model, learn_model if build_learn_model else None, example_episode,
+                             create_environment, iic_distorter if learn_in_tester else None, tester_configs)
         if monkey_client_mode:
             tester_agent_ref.append(agent)
         return agent
