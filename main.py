@@ -1,32 +1,29 @@
 import os
 import random
-import signal
-import sys
+from datetime import datetime
 from functools import partial
 from io import BytesIO
 from typing import Callable, List, Any, Tuple, Union, Dict
 
+import matplotlib.cm as cm
 import numpy as np
 import tensorflow as tf
 import tensorflow.keras as keras
-
-from datetime import datetime
-import matplotlib.cm as cm
 import yaml
 from PIL import Image
 
 import readouts
 from environment import EnvironmentCallbacks, Environment
-from tf_utils import BufferLogger
+from phone import DummyPhone, Phone
 # noinspection PyUnresolvedReferences
 from predictors import ScreenPreprocessor, SimpleRewardPredictor, UNetRewardPredictor, RandomRewardPredictor
-from phone import DummyPhone, Phone
 from readouts import PredictionClusterer, better_reward_to_action, worse_reward_to_action, \
     most_certain_reward_to_action, least_certain_reward_to_action, random_reward_to_action
 from relevant_action import RelevantActionEnvironment
 from relevant_action_monkey_client import RelevantActionMonkeyClient
 from single_state_categorical_reward import DataCollectionAgent, LearningAgent, Episode, TestingAgent, \
     ProcessBasedCoordinator
+from tf_utils import BufferLogger
 from utils import Config
 
 
@@ -456,7 +453,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                              'crop_size': screen_preprocessor_crop_size, 'pos_reward': pos_reward,
                              'neg_reward': neg_reward, 'screenshots_interval': screenshots_interval,
                              'global_equality_threshold': global_equality_threshold,
-                             'calculate_reward': calculate_reward}
+                             'calculate_reward': calculate_reward, 'screen_shape': screen_shape}
 
     screen_preprocessor_resize_size_a = np.array(screen_preprocessor_resize_size)
     screen_preprocessor_crop_top_left_a = np.array(screen_preprocessor_crop_top_left)

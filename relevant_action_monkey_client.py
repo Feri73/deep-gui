@@ -9,6 +9,7 @@ from typing import Any, Callable, Union, Optional
 
 import numpy as np
 import matplotlib.image as mpimg
+from PIL import Image
 
 from environment import Environment, EnvironmentController
 from utils import Config
@@ -35,6 +36,7 @@ class RelevantActionMonkeyClient(Environment):
         self.screenshots_interval = cfg['screenshots_interval']
         self.global_equality_threshold = cfg['global_equality_threshold']
         self.calculate_reward = cfg['calculate_reward']
+        self.screen_shape = tuple(cfg['screen_shape'])
 
         self.socket = None
         self.control_socket = None
@@ -79,7 +81,7 @@ class RelevantActionMonkeyClient(Environment):
         except BlockingIOError:
             pass
 
-    def connect(self, check_control:bool = False) -> None:
+    def connect(self, check_control: bool = False) -> None:
         while True:
             if check_control:
                 self.check_control()
@@ -109,8 +111,8 @@ class RelevantActionMonkeyClient(Environment):
             assert not blocking
             return None
 
-    def send(self, data:str) -> None:
-        self.socket.send((data+'\n').encode())
+    def send(self, data: str) -> None:
+        self.socket.send((data + '\n').encode())
 
     def disconnect(self) -> None:
         self.send('done')
@@ -143,6 +145,8 @@ class RelevantActionMonkeyClient(Environment):
         self.adb(f'emu screenrecord screenshot {screenshot_path}')
         print(f'{datetime.now()}: took a screenshot from {self.server_port}')
         res = mpimg.imread(screenshot_path)[:, :, :-1]
+        if res.shape[:2] != self.screen_shape:
+            res = np.array(Image.fromarray(res).resize(self.screen_shape))
         return (res * 255).astype(np.uint8)
 
     def is_finished(self) -> bool:
@@ -221,4 +225,3 @@ class RelevantActionMonkeyClient(Environment):
         wait_action()
 
         return reward * self.pos_reward + (1 - reward) * self.neg_reward
-

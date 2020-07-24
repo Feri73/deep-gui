@@ -9,6 +9,7 @@ import time
 from typing import Union, Optional, List, Tuple, Callable, Any
 
 import matplotlib.image as mpimg
+from PIL import Image
 import numpy as np
 
 import glob
@@ -21,6 +22,7 @@ class Phone:
     def __init__(self, device_name: str, port: int, cfg: Config):
         self.device_name = device_name
         self.port = port
+        self.screen_shape = cfg['screen_shape']
         self.emulator_path = cfg['emulator_path']
         self.adb_path = cfg['adb_path']
         self.install_wait_time = cfg['install_wait_time']
@@ -321,6 +323,8 @@ class Phone:
         image_path = f'{screenshot_dir}/scr.png'
         self.adb(f'emu screenrecord screenshot {image_path}')
         res = mpimg.imread(image_path)[:, :, :-1]
+        if res.shape[:2] != self.screen_shape:
+            res = np.array(Image.fromarray(res).resize(self.screen_shape))
         return (res * 255).astype(np.uint8)
 
     def send_event(self, x: int, y: int, type: int) -> Optional[np.ndarray]:
