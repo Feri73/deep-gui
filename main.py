@@ -471,10 +471,10 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     def screen_pos_to_action_pos(p: np.ndarray) -> np.ndarray:
         return transform_linearly(to_preprocessed_coord(p),
                                   prediction_shape_a / screen_preprocessor_resize_size_a,
-                                  np.array([0, 0])) - .5
+                                  np.array([0, 0]))
 
     def action_pos_to_screen_pos(action_p: np.ndarray, dtype=None) -> np.ndarray:
-        return transform_linearly(action_p + .5, screen_preprocessor_crop_size_a / prediction_shape_a,
+        return transform_linearly(action_p, screen_preprocessor_crop_size_a / prediction_shape_a,
                                   screen_preprocessor_crop_top_left_a, dtype)
 
     example_episode = Episode(np.zeros((*screen_shape, 3), np.uint8), np.zeros(3, np.int32),
