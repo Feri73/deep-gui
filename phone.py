@@ -68,6 +68,7 @@ class Phone:
         self.step = 0
         self.visited_activities = set()
         self.action_metadata_callbacks = []
+        self.true_screen_shape = None
 
     def add_action_metadata_callback(self, callback: Callable) -> None:
         self.action_metadata_callbacks.append(callback)
@@ -323,11 +324,15 @@ class Phone:
         image_path = f'{screenshot_dir}/scr.png'
         self.adb(f'emu screenrecord screenshot {image_path}')
         res = mpimg.imread(image_path)[:, :, :-1]
-        if res.shape[:2] != self.screen_shape:
-            res = np.array(Image.fromarray(res).resize(self.screen_shape))
-        return (res * 255).astype(np.uint8)
+        self.true_screen_shape = res.shape[:2]
+        res = (res * 255).astype(np.uint8)
+        if self.true_screen_shape != self.screen_shape:
+            res = np.array(Image.fromarray(res).resize((self.screen_shape[1], self.screen_shape[0])))
+        return res
 
     def send_event(self, x: int, y: int, type: int) -> Optional[np.ndarray]:
+        y *= self.true_screen_shape[0] // self.screen_shape[0]
+        x *= self.true_screen_shape[1] // self.screen_shape[1]
         # better logging
         if type == 0:
             print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')

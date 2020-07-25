@@ -43,6 +43,7 @@ class RelevantActionMonkeyClient(Environment):
         self.pinged = False
         self.current_state = None
         self.finished = True
+        self.true_screen_shape = None
         if not os.path.exists(f'.client_screenshots'):
             os.makedirs(f'.client_screenshots')
 
@@ -145,9 +146,11 @@ class RelevantActionMonkeyClient(Environment):
         self.adb(f'emu screenrecord screenshot {screenshot_path}')
         print(f'{datetime.now()}: took a screenshot from {self.server_port}')
         res = mpimg.imread(screenshot_path)[:, :, :-1]
-        if res.shape[:2] != self.screen_shape:
-            res = np.array(Image.fromarray(res).resize(self.screen_shape))
-        return (res * 255).astype(np.uint8)
+        self.true_screen_shape = res.shape[:2]
+        res = (res * 255).astype(np.uint8)
+        if self.true_screen_shape != self.screen_shape:
+            res = np.array(Image.fromarray(res).resize((self.screen_shape[1], self.screen_shape[0])))
+        return res
 
     def is_finished(self) -> bool:
         self.finished = not self.finished
@@ -166,6 +169,9 @@ class RelevantActionMonkeyClient(Environment):
         self.pinged = False
         type = action[2]
         action = self.action2pos(action)
+        y = action[1] * self.true_screen_shape[0] // self.screen_shape[0]
+        x = action[0] * self.true_screen_shape[1] // self.screen_shape[1]
+        action = (x, y, action[2])
         if type == 0:
             print(f'{datetime.now()}: sending click on {action[0]}, {action[1]} to {self.server_port}')
             # read the output of monkey here: should be OK

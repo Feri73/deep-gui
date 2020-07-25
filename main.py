@@ -215,7 +215,7 @@ class CollectorLogger(EnvironmentCallbacks):
             if clusterings is not None or self.prediction_overlay_factor > 0:
                 prev_size = pred.shape[:2]
                 pred = Image.fromarray(pred)
-                pred = pred.resize(new_size)
+                pred = pred.resize((new_size[1], new_size[0]))
                 pred = Image.blend(pred, Image.fromarray(self.preprocessed_screen), self.prediction_overlay_factor)
                 pred = np.array(pred)
                 if clusterings is not None:
