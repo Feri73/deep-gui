@@ -96,12 +96,13 @@ class PredictionClusterer:
             all_valid_clusters_nums[-1] = valid_clusters_nums
 
         if sum(map(len, all_clusters)) == 0:
-            return random_reward_to_action(preds_old)
+            return better_reward_to_action(preds_old)
 
         valid_types = [i for i in range(len(all_clusters)) if len(all_clusters[i]) > 0]
         valid_type_coeffs = np.array([action_prob_coeffs[i]
                                       for i in range(len(all_clusters)) if len(all_clusters[i]) > 0])
         chosen_type = np.random.choice(valid_types, 1, p=valid_type_coeffs / np.sum(valid_type_coeffs))[0]
+        preds = preds_old[0, :, :, chosen_type]
         valid_clusters_nums = all_valid_clusters_nums[chosen_type]
         clickables = all_clickables[chosen_type]
         clusters = all_clusters[chosen_type]
