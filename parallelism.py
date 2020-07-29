@@ -1,19 +1,9 @@
 import multiprocessing
 from abc import ABC, abstractmethod
 from queue import Empty
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple, Union
 
 from utils import Config
-
-
-class ThreadLocals:
-    def __init__(self):
-        self.thread = None
-        self.collector = None
-        self.new_weight = None
-
-    def pop_and_run_next(self, *local_args, wait=False) -> None:
-        self.thread.pop_and_run_next(*local_args, wait=wait)
 
 
 class Thread(ABC):
@@ -52,12 +42,17 @@ class Process(Thread):
     def run(self) -> None:
         self.process.start()
 
-    def pop_and_run_next(self, *local_args, wait=False) -> None:
+    def pop_next(self, wait=False) -> Union[Tuple[Callable, list], Tuple[None, None]]:
         try:
             if wait:
                 func, args = self.queue.get()
             else:
                 func, args = self.queue.get_nowait()
-            func(*local_args, *args)
+            return func, args
         except Empty:
-            pass
+            return None, None
+
+    def pop_and_run_next(self, *local_args, wait=False) -> None:
+        func, args = self.pop_next(wait)
+        if func is not None:
+            func(*local_args, *args)

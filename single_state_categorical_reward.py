@@ -13,7 +13,7 @@ import tensorflow.keras as keras
 from tensorflow_core.python.keras.callbacks import LambdaCallback
 
 from environment import EnvironmentCallbacks, EnvironmentController, Environment
-from parallelism import ThreadLocals, Thread, Process
+from parallelism import Thread, Process
 from utils import Config, MemVariable, dump_obj, load_obj
 
 
@@ -164,9 +164,8 @@ class DataCollectionAgent(EnvironmentCallbacks, EnvironmentController):
 
 
 class TestingAgent(DataCollectionAgent):
-    def __init__(self, id: int, model: keras.Model, learn_model: Optional[keras.Model], example_episode: Episode,
-                 create_environment: Callable[['DataCollectionAgent'], Environment],
-                 iic_distorter: Optional[Callable], cfg: Config):
+    def __init__(self, id: int, model: keras.Model, example_episode: Episode,
+                 create_environment: Callable[['DataCollectionAgent'], Environment], cfg: Config):
         self.learn = cfg['learn']
         self.weights_file = cfg['weights_file']
         self.weight_reset_frequency = cfg['weight_reset_frequency']
@@ -178,16 +177,8 @@ class TestingAgent(DataCollectionAgent):
         max_episodes = cfg['max_episodes']
         max_file_size = cfg['max_file_size']
         file_dir = cfg['file_dir']
-        shuffle = cfg['shuffle']
-        correct_distributions = cfg['correct_distributions']
-        augmenting_correction = cfg['augmenting_correction']
-        strict_correction = cfg['strict_correction']
-        batch_size = cfg['batch_size']
-        epochs_per_version = cfg['epochs_per_version']
         meta_save_frequency = max_file_size
         version_start = 0
-        save_dir = None
-        validation_dir = None
 
         collection_cfg = {
             'max_episodes': max_episodes,
@@ -196,17 +187,6 @@ class TestingAgent(DataCollectionAgent):
             'file_dir': file_dir,
             'version_start': version_start
         }
-        learning_cfg = {
-            'file_dir': file_dir,
-            'shuffle': shuffle,
-            'correct_distributions': correct_distributions,
-            'augmenting_correction': augmenting_correction,
-            'strict_correction': strict_correction,
-            'batch_size': batch_size,
-            'epochs_per_version': epochs_per_version,
-            'save_dir': save_dir,
-            'validation_dir': validation_dir
-        }
 
         super().__init__(id, model, example_episode, create_environment, collection_cfg)
 
@@ -214,24 +194,34 @@ class TestingAgent(DataCollectionAgent):
         self.most_recent_weights = None
         self.next_file_valid = True
         self.first_valid_version = 0
+        self.is_learning = False
+        self.weight_reset_callbacks = []
+        self.learning_request_callback = None
         self.past_rewards = deque(maxlen=past_rewards_window)
 
         self.add_on_file_completed_callbacks(self.on_file_completed)
 
-        if self.learn:
-            self.learning_agent = LearningAgent(id, learn_model, iic_distorter, learning_cfg)
-
     def reset_file(self, new_file: bool = True):
         super().reset_file(new_file)
         self.next_file_valid = True
+
+    def set_learning_request_callback(self, callback: Callable) -> Callable:
+        self.learning_request_callback = callback
+
+        def done_callback():
+            self.is_learning = False
+
+        return done_callback
 
     def on_file_completed(self, id: int, file_version: int):
         if self.next_file_valid:
             past_rewards_sum = sum(self.past_rewards) / len(self.past_rewards)
             print(f'{datetime.now()}: past {len(self.past_rewards)} rewards sum '
                   f'in tester {self.id} is {past_rewards_sum}.')
-            if past_rewards_sum < self.past_rewards_threshold:
-                self.learning_agent.learn(list(range(max(
+            if past_rewards_sum < self.past_rewards_threshold and not self.is_learning:
+                self.is_learning = True
+                print(f'{datetime.now()}: sending learning request in tester {self.id}.')
+                self.learning_request_callback(self.id, list(range(max(
                     file_version + 1 - self.version_window, self.first_valid_version),
                     file_version + 1)), self.loss_threshold)
         else:
@@ -242,16 +232,25 @@ class TestingAgent(DataCollectionAgent):
         if self.learn:
             self.most_recent_weights = weights
 
+    def add_on_weight_reset_callbacks(self, callback: Callable) -> None:
+        self.weight_reset_callbacks.append(callback)
+
     def reset_weights(self):
+        if not self.learn:
+            return
         if self.steps > 0:
             self.next_file_valid = False
         print(f'{datetime.now()}: resetting weights for tester {self.id} with weights from ', end='')
         self.past_rewards.clear()
         if self.most_recent_weights is not None:
             print('global learner')
+            for callback in self.weight_reset_callbacks:
+                callback(self.id)
             self.update_weights(self.most_recent_weights)
         elif self.weights_file is not None:
             print('file')
+            for callback in self.weight_reset_callbacks:
+                callback(self.id, self.weights_file)
             self.model.load_weights(self.weights_file, by_name=True)
 
     def on_episode_start(self, state: np.ndarray) -> None:
@@ -269,10 +268,17 @@ class TestingAgent(DataCollectionAgent):
 
 
 class EarlyStoppingByLossVal(keras.callbacks.Callback):
-    def __init__(self, monitor, value):
+    def __init__(self, monitor, value, stop_predicate: Callable, batch_end_callback: Callable = None):
         super().__init__()
         self.monitor = monitor
         self.value = value
+        self.stop_predicate = stop_predicate
+        self.batch_end_callback = batch_end_callback
+
+    def on_batch_end(self, batch, logs=None):
+        self.batch_end_callback()
+        if self.stop_predicate():
+            self.model.stop_training = True
 
     def on_epoch_end(self, epoch, logs={}):
         current = logs.get(self.monitor)
@@ -299,6 +305,8 @@ class LearningAgent:
         # plot the model (maybe here or where it's created)
         self.model = model
         self.iic_distorter = iic_distorter
+        self.stop_learning_callback = None
+        self.is_learning = False
 
     class EpisodeFileManager:
         def __init__(self, episode_files: List[EpisodeFile]):
@@ -466,8 +474,13 @@ class LearningAgent:
 
         return generator, max(training_size, self.batch_size)
 
+    def stop_if_learning(self, callback: Callable) -> None:
+        if self.is_learning:
+            self.stop_learning_callback = callback
+
     # add logs
-    def learn(self, version: Union[int, List[int]], loss_threshold: int = None) -> None:
+    def learn(self, version: Union[int, List[int]], loss_threshold: int = None,
+              batch_end_callback: Callable = None) -> None:
         generator, data_size = self.create_training_data(self.file_dir, version)
         if self.validation_dir is not None:
             validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
@@ -494,19 +507,40 @@ class LearningAgent:
                     save_freq='epoch')
                 callbacks.append(checkpoint_callback)
             if loss_threshold is not None:
-                stop_callback = EarlyStoppingByLossVal('loss', loss_threshold)
+                stop_callback = EarlyStoppingByLossVal('loss', loss_threshold,
+                                                       lambda: self.stop_learning_callback is not None,
+                                                       batch_end_callback)
                 callbacks.append(stop_callback)
 
+            self.stop_learning_callback = None
+            self.is_learning = True
             self.model.fit(data, validation_data=validation_data, validation_steps=validation_steps,
                            epochs=int(self.epochs_per_version), steps_per_epoch=steps_per_epoch,
                            callbacks=callbacks)
+            self.is_learning = False
+            if self.stop_learning_callback is not None:
+                self.stop_learning_callback()
+                self.stop_learning_callback = None
+
             del data
+
+
+class ThreadLocals:
+    def __init__(self):
+        self.thread = None
+        self.collector = None
+        self.new_weight = None
+        self.new_tester_weight = None
+
+    def pop_and_run_next(self, *local_args, wait=False) -> None:
+        self.thread.pop_and_run_next(*local_args, wait=wait)
 
 
 class Coordinator(ABC, EnvironmentCallbacks):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
                  learner_creator: Callable[[], LearningAgent],
-                 tester_creators: List[Callable[[], TestingAgent]], cfg: Config):
+                 tester_creators: List[Union[int, Callable[[], TestingAgent]]],
+                 tester_learner_creators: List[Callable[[], Union[None, LearningAgent]]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
         self.train = cfg['train']
         self.pre_training = cfg['pre_training']
@@ -515,11 +549,19 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
-        self.tester_creators = tester_creators
+        self.tester_ids, self.tester_creators = zip(*tester_creators)
+        self.tester_learner_creators = tester_learner_creators
 
         self.learner = None
+        self.learner_thread_run_queue = deque()
+        self.tester_learners = []
         self.file_completions = defaultdict(list)
         self.environment_completion_count = 0
+        self.is_tester = None
+        self.weight_reset_requested = []
+        self.tester_reset_weight_file = []
+        self.tester_in_learning = []
+        self.learning_done_callback = None
 
         self.learner_thread = None
         self.collector_threads = []
@@ -537,10 +579,13 @@ class Coordinator(ABC, EnvironmentCallbacks):
     def get_main_thread(self) -> Thread:
         pass
 
-    def start_collector(self, collector_creator: Callable[[], DataCollectionAgent],
-                        is_tester: bool, thread: Thread) -> None:
+    def start_collector(self, collector_creator: Callable[[], DataCollectionAgent], thread: Thread) -> None:
         collector = collector_creator()
-        if not is_tester:
+        self.is_tester = isinstance(collector, TestingAgent)
+        if self.is_tester:
+            self.learning_done_callback = collector.set_learning_request_callback(self.on_tester_learning_request)
+            collector.add_on_weight_reset_callbacks(self.on_tester_weight_reset)
+        else:
             collector.add_on_file_completed_callbacks(self.on_collector_file_completed)
         collector.environment.add_callback(self)
         self.get_thread_locals().collector = collector
@@ -551,6 +596,8 @@ class Coordinator(ABC, EnvironmentCallbacks):
     def on_episode_end(self, premature: bool) -> None:
         self.get_thread_locals().pop_and_run_next(self)
         self.local_update_collector_weight()
+        if self.is_tester:
+            self.local_update_tester_weight()
 
     def on_environment_finished(self) -> None:
         self.learner_thread.add_to_run_queue(Coordinator.record_environment_completion)
@@ -560,14 +607,25 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
     def local_set_new_weight(self, new_weight: List[tf.Tensor]) -> None:
         self.get_thread_locals().new_weight = new_weight
-        print(f'{datetime.now()}: collector {self.get_thread_locals().collector.id} synced weights.')
+
+    def local_set_new_tester_weight(self, new_weight: List[tf.Tensor]) -> None:
+        self.get_thread_locals().new_tester_weight = new_weight
 
     # make these functions with function decorator for coolness :D
     def local_update_collector_weight(self):
         locals = self.get_thread_locals()
         if locals.new_weight is not None:
             locals.collector.update_weights(locals.new_weight)
+            print(f'{datetime.now()}: collector {self.get_thread_locals().collector.id} synced weights.')
             locals.new_weight = None
+
+    def local_update_tester_weight(self):
+        locals = self.get_thread_locals()
+        if locals.new_tester_weight is not None:
+            locals.collector.update_weights(locals.new_tester_weight)
+            print(f'{datetime.now()}: tester {self.get_thread_locals().collector.id} synced weights with its learner.')
+            locals.new_tester_weight = None
+            self.call_learning_done_callback()
 
     def send_to_workers(self, func: Callable, *args) -> None:
         for collector_thread in self.collector_threads:
@@ -575,32 +633,103 @@ class Coordinator(ABC, EnvironmentCallbacks):
         for tester_thread in self.tester_threads:
             tester_thread.add_to_run_queue(func, *args)
 
+    def send_to_tester(self, id: int, func: Callable, *args) -> None:
+        self.tester_threads[self.tester_ids.index(id)].add_to_run_queue(func, *args)
+
     def sync_weights(self):
         if not self.sync_weight:
             return
         print(f'{datetime.now()}: sending weights to workers.')
         self.send_to_workers(Coordinator.local_set_new_weight, self.learner.get_weights())
 
+    def sync_tester_weight(self, id: int) -> None:
+        print(f'{datetime.now()}: sending weights to tester {id}.')
+        self.send_to_tester(id, Coordinator.local_set_new_tester_weight,
+                            self.tester_learners[self.tester_ids.index(id)].get_weights())
+
     def dummy(self):
         return
 
-    def record_collector_file_completion(self, version: int) -> None:
+    def record_collector_file_completion(self, id: int, version: int) -> None:
         self.file_completions[version].append(True)
         if self.train and len(self.file_completions[version]) == len(self.collector_creators):
             self.learner.learn(version)
             self.sync_weights()
 
+    def tester_learning_batch_end_callback(self, id: int) -> None:
+        while True:
+            func, args = self.learner_thread.pop_next()
+            if func is None:
+                return
+            if isinstance(func, partial) and func.func is Coordinator.tester_learner_weight_reset and \
+                    func.keywords['id'] == id:
+                func(self, *args)
+                return
+            else:
+                self.learner_thread_run_queue.append((func, args))
+
+    def reset_tester_learner_weights(self, id: int) -> None:
+        tester_index = self.tester_ids.index(id)
+        print(f'{datetime.now()}: resetting tester learner weights for {id}.')
+        if self.tester_reset_weight_file[tester_index] is None:
+            self.tester_learners[tester_index].model.set_weights(self.learner.model.get_weights())
+        else:
+            self.tester_learners[tester_index].model.load_weights(self.tester_reset_weight_file[tester_index],
+                                                                  by_name=True)
+
+    def learn_for_tester(self, id: int, version: List[int], loss_threshold: float) -> None:
+        tester_index = self.tester_ids.index(id)
+        self.tester_in_learning[tester_index] = True
+        self.tester_learners[tester_index].learn(version, loss_threshold,
+                                                 partial(self.tester_learning_batch_end_callback, id=id))
+        if self.weight_reset_requested[tester_index]:
+            self.reset_tester_learner_weights(id)
+            self.send_to_tester(id, Coordinator.call_learning_done_callback)
+        else:
+            self.sync_tester_weight(id)
+        self.weight_reset_requested[tester_index] = False
+
+    def call_learning_done_callback(self) -> None:
+        self.learning_done_callback()
+
     def on_collector_file_completed(self, id: int, version: int) -> None:
-        self.learner_thread.add_to_run_queue(partial(Coordinator.record_collector_file_completion, version=version))
+        self.learner_thread.add_to_run_queue(
+            partial(Coordinator.record_collector_file_completion, id=id, version=version))
+
+    def on_tester_learning_request(self, id: int, version: List[int], loss_threshold: float) -> None:
+        self.learner_thread.add_to_run_queue(partial(Coordinator.learn_for_tester, id=id,
+                                                     version=version, loss_threshold=loss_threshold))
+
+    def on_tester_weight_reset(self, id: int, weight_file: str = None) -> None:
+        self.learner_thread.add_to_run_queue(partial(Coordinator.tester_learner_weight_reset,
+                                                     id=id, weight_file=weight_file))
+
+    def tester_learner_weight_reset(self, id: int, weight_file: str = None) -> None:
+        tester_index = self.tester_ids.index(id)
+
+        def func():
+            self.weight_reset_requested[tester_index] = True
+            self.tester_reset_weight_file[tester_index] = weight_file
+
+        tester_learner = self.tester_learners[tester_index]
+        if self.tester_in_learning[tester_index]:
+            print(f'{datetime.now()}: sending stop request in learner {tester_learner.id}.')
+            tester_learner.stop_if_learning(func)
+        else:
+            self.reset_tester_learner_weights(id)
 
     def start(self):
         self.learner_thread = self.get_main_thread()
-        self.collector_threads = [self.create_thread(self.start_collector, c_creator, False)
+        self.collector_threads = [self.create_thread(self.start_collector, c_creator)
                                   for c_creator in self.collector_creators]
-        self.tester_threads = [self.create_thread(self.start_collector, t_creator, True)
+        self.tester_threads = [self.create_thread(self.start_collector, t_creator)
                                for t_creator in self.tester_creators]
         [c_thread.run() for c_thread in self.collector_threads]
         [t_thread.run() for t_thread in self.tester_threads]
+        self.tester_learners = [learner_creator() for learner_creator in self.tester_learner_creators]
+        self.weight_reset_requested = [False] * len(self.tester_learners)
+        self.tester_reset_weight_file = [None] * len(self.tester_learners)
+        self.tester_in_learning = [False] * len(self.tester_learners)
         self.learner = self.learner_creator()
         if self.pre_training:
             self.learner.learn(list(range(self.collector_version_start)))
@@ -610,17 +739,22 @@ class Coordinator(ABC, EnvironmentCallbacks):
             print(f'{datetime.now()}: sending dummy to workers.')
             self.send_to_workers(Coordinator.dummy)
         while self.environment_completion_count < len(self.collector_creators) + len(self.tester_creators):
-            self.learner_thread.pop_and_run_next(self)
+            if len(self.learner_thread_run_queue) > 0:
+                func, args = self.learner_thread_run_queue.popleft()
+                func(self, *args)
+            else:
+                self.learner_thread.pop_and_run_next(self)
             time.sleep(1)
 
 
 class ProcessBasedCoordinator(Coordinator):
     def __init__(self, collector_creators: List[Callable[[], DataCollectionAgent]],
                  learner_creator: Callable[[], LearningAgent],
-                 tester_creators: List[Callable[[], DataCollectionAgent]], cfg: Config):
+                 tester_creators: List[Union[int, Callable[[], TestingAgent]]],
+                 tester_learner_creators: List[Callable[[], Union[None, LearningAgent]]], cfg: Config):
         self.process_configs = cfg['process_configs']
 
-        super().__init__(collector_creators, learner_creator, tester_creators, cfg)
+        super().__init__(collector_creators, learner_creator, tester_creators, tester_learner_creators, cfg)
 
         self.thread_count = 0
         self.thread_locals = None

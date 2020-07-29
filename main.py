@@ -422,8 +422,6 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     reward_predictor_configs = cfg[f'{reward_predictor[1]}_reward_predictor_configs']
     learn_in_tester = tester_configs['learn']
     learning_rate = tester_configs['learning_rate']
-    batch_size = learner_configs['batch_size'] if is_learner else None if is_tester and learn_in_tester else 1
-    build_learn_model = is_learner or (is_tester and learn_in_tester)
 
     environment_configs['pos_reward'] = pos_reward
     environment_configs['neg_reward'] = neg_reward
@@ -439,9 +437,15 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     phone_configs['clone_script_path'] = testers_clone_script if is_tester else collectors_clone_script
     collector_configs['file_dir'] = data_file_dir
     learner_configs['file_dir'] = data_file_dir
-    tester_configs['file_dir'] = tester_configs['file_dir'] + '/tester' + str(agent_num)
     tester_configs['weights_file'] = weights_file
-    tester_configs['shuffle'] = True
+    tester_configs['file_dir'] = tester_configs['file_dir'] + '/tester' + str(id)
+    tester_learner_configs = tester_configs['learner_configs']
+    batch_size = 1 if not is_learner else tester_learner_configs['batch_size'] \
+        if is_tester else learner_configs['batch_size']
+    tester_learner_configs['file_dir'] = tester_configs['file_dir']
+    tester_learner_configs['shuffle'] = True
+    tester_learner_configs['save_dir'] = None
+    tester_learner_configs['validation_dir'] = None
     if is_tester and monkey_client_mode:
         tester_configs['weight_reset_frequency'] = None
     collector_logger_configs['dir'] = logs_dir
@@ -480,7 +484,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     screen_preprocessor = ScreenPreprocessor(screen_preprocessor_configs, name='screen_preprocessor')
 
     regs, coeffs = [], []
-    if build_learn_model:
+    if is_learner:
         if variance_reg_coeff != 0:
             regs.append(preds_variance_regularizer)
             coeffs.append(-variance_reg_coeff)
@@ -497,7 +501,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                                       dtype=example_episode.state.dtype)
     predictions = reward_predictor(screen_preprocessor(screen_input))
 
-    if build_learn_model:
+    if is_learner:
         action_sampler = keras.layers.Lambda(lambda elems: prediction_sampler(elems[0], elems[1]),
                                              name='action_sampler')
         action_input = keras.layers.Input(example_episode.action.shape, batch_size, name='action',
@@ -536,8 +540,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             learn_model_output = reward
 
         learn_model = keras.Model(inputs=learn_model_input, outputs=learn_model_output)
-
-    if not is_learner:
+    else:
         built_prediction_to_action_options = [prediction_to_action_options[0](agent_clusterer_cfg_name)] + \
                                              prediction_to_action_options[1:]
         action = keras.layers.Lambda(
@@ -558,11 +561,11 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
         model = keras.Model(inputs=input, outputs=output)
 
     if weights_file is not None:
-        if build_learn_model:
+        if is_learner:
             learn_model.load_weights(weights_file, by_name=True)
-        if not is_learner:
+        else:
             model.load_weights(weights_file, by_name=True)
-    if build_learn_model:
+    if is_learner:
         if is_tester:
             optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         else:
@@ -592,7 +595,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                 logger.set_environment(env)
             return env
 
-    if build_learn_model:
+    if is_learner:
         iic_distorter = combine_distort_episode(
             list(zip([distort_episode_color, partial(distort_episode_shift,
                                                      shift_max_value=distort_shift_max_value,
@@ -602,10 +605,9 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
         iic_distorter = None if iic_coeff == 0 else iic_distorter
 
     if is_learner:
-        return LearningAgent(id, learn_model, iic_distorter, learner_configs)
+        return LearningAgent(id, learn_model, iic_distorter, tester_learner_configs if is_tester else learner_configs)
     elif is_tester:
-        agent = TestingAgent(id, model, learn_model if build_learn_model else None, example_episode,
-                             create_environment, iic_distorter if learn_in_tester else None, tester_configs)
+        agent = TestingAgent(id, model, example_episode, create_environment, tester_configs)
         if monkey_client_mode:
             tester_agent_ref.append(agent)
         return agent
@@ -664,12 +666,19 @@ if __name__ == '__main__':
                                   False, False, probs_and_ops[0], probs_and_ops[2] if len(probs_and_ops) > 2 else None,
                                   weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
                           for i, probs_and_ops in enumerate(collector_option_probs_and_ops)]
-    tester_creators = [partial(create_agent, i, i + len(collector_creators),
-                               probs_and_ops[1] if len(probs_and_ops) > 1 else '', False, True,
-                               probs_and_ops[0], probs_and_ops[2] if len(probs_and_ops) > 2 else None,
-                               weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
-                       for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
-    learner_creator = partial(create_agent, *2 * (len(collector_creators) + len(tester_creators),), 'learner',
+    tester_creators = list(zip(range(len(tester_option_probs_and_ops)),
+                               [partial(create_agent, i, i + len(collector_creators),
+                                        probs_and_ops[1] if len(probs_and_ops) > 1 else '', False, True,
+                                        probs_and_ops[0], probs_and_ops[2] if len(probs_and_ops) > 2 else None,
+                                        weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
+                                for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]))
+    tester_learner_creators = [partial(create_agent, i, i + len(collector_creators) + len(tester_creators),
+                                       (probs_and_ops[1] if len(probs_and_ops) > 1 else '') + '_learner', True, True,
+                                       None, None,
+                                       weights_file[probs_and_ops[3]] if len(probs_and_ops) > 3 else None)
+                               for i, probs_and_ops in enumerate(tester_option_probs_and_ops)]
+    learner_creator = partial(create_agent, *2 * (len(collector_creators) + 2 * len(tester_creators),), 'learner',
                               True, False, None, None, weights_file['learner'])
-    coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators, cfg['coordinator_configs'])
+    coord = ProcessBasedCoordinator(collector_creators, learner_creator, tester_creators,
+                                    tester_learner_creators, cfg['coordinator_configs'])
     coord.start()
