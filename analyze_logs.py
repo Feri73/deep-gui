@@ -6,9 +6,10 @@ import shutil
 from collections import defaultdict
 from functools import partial
 from shutil import copyfile
-from typing import List, Dict, Callable, Tuple, Union, Optional
+from typing import List, Dict, Callable, Tuple, Union, Optional, Any
 
 import numpy as np
+import scipy
 from scipy import stats
 import tensorflow as tf
 
@@ -181,6 +182,41 @@ def process_logs(logs: Logs, func: Callable, axes: List[int],
     return result_logs
 
 
+def generate_all_coords(axes: List[List[Any]], axis_i: int = 0) -> List[Any]:
+    if axis_i >= len(axes):
+        yield []
+        return
+    for v in axes[axis_i]:
+        for h in generate_all_coords(axes, axis_i + 1):
+            yield [v] + h
+
+
+def nankstest(array: np.ndarray, axis: int, test_axis: int, cutoff: float = .05) -> np.ndarray:
+    shape = array.shape
+    axis = axis % len(shape)
+    test_axis = test_axis % len(shape)
+    assert shape[test_axis] == 2
+    result = np.zeros(tuple([1 if i == axis else shape[i] for i in range(len(shape))]))
+    for coord0 in generate_all_coords([[None] if i == axis or i == test_axis else list(range(shape[i]))
+                                       for i in range(len(shape))]):
+        coord1 = coord0.copy()
+        coord0[test_axis] = 0
+        coord1[test_axis] = 1
+        coord0 = tuple(coord0)
+        coord1 = tuple(coord1)
+        array0 = array[coord0]
+        array0 = array0[np.logical_not(np.isnan(array0))]
+        array1 = array[coord1]
+        array1 = array1[np.logical_not(np.isnan(array1))]
+        if len(array0) == 0 or len(array1) == 0:
+            test_result = 1
+        else:
+            test_result = scipy.stats.kstest(array0, array1, alternative='less')[1]
+        result[coord0] = np.nan if test_result < cutoff else 0
+        result[coord1] = result[coord0]
+    return result
+
+
 def nanwmean(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
     weights = np.ones_like(array) * weights
     array = array.copy()
@@ -211,7 +247,8 @@ def max_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
 
 
 def range_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
-    return process_logs(logs, lambda a: np.maximum(0.00001, np.nanmax(a, axis=-1) - np.nanmin(a, axis=-1)), axes=axes, reduce=True, **kwargs)
+    return process_logs(logs, lambda a: np.maximum(0.00001, np.nanmax(a, axis=-1) - np.nanmin(a, axis=-1)), axes=axes,
+                        reduce=True, **kwargs)
 
 
 def mean_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
@@ -234,6 +271,13 @@ def error_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> L
                             axes=axes, reduce=True, **kwargs)
     else:
         return process_logs(logs, partial(nanwerror, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
+
+
+def kstest_logs(logs: Logs, axes: List[int], test_axis: int, weights: Logs = None, **kwargs) -> Logs:
+    if weights is not None:
+        raise NotImplementedError('cannot compute weighted ks test')
+    return process_logs(logs, partial(nankstest, axis=-1, test_axis=test_axis - sum([a < test_axis for a in axes])),
+                        axes=axes, reduce=True, **kwargs)
 
 
 def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
@@ -289,6 +333,9 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     if action == 'mean':
         errors = error_logs(logs, axes=summary_axes, **p_dict)
         results = (results[0], ((summary, errors), name_prefix + '_errors', summary_dim_vals))
+        if len(dim_vals[0]) == 2 and 'weights' not in p_dict:
+            sig = kstest_logs(logs, axes=summary_axes, test_axis=0, **p_dict)
+            results = results + ((sig, name_prefix + '_sig', summary_dim_vals),)
     return results
 
 
