@@ -706,10 +706,10 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
     def tester_learner_weight_reset(self, id: int, weight_file: str = None) -> None:
         tester_index = self.tester_ids.index(id)
+        self.tester_reset_weight_file[tester_index] = weight_file
 
         def func():
             self.weight_reset_requested[tester_index] = True
-            self.tester_reset_weight_file[tester_index] = weight_file
 
         tester_learner = self.tester_learners[tester_index]
         if self.tester_in_learning[tester_index]:

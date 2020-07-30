@@ -1,4 +1,5 @@
 import os
+import copy
 import random
 from datetime import datetime
 from functools import partial
@@ -383,6 +384,7 @@ def preds_variance_regularizer(preds: tf.Tensor) -> tf.Tensor:
 def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_tester: bool,
                  agent_option_probs: List[float], agent_clusterer_cfg_name: str,
                  weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
+    cfg = copy.deepcopy(globals()['cfg'])
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
