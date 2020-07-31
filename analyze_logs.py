@@ -70,7 +70,7 @@ def read_logs(logs_dir: str, tags: List[str], tools: List[str], apps: List[str],
                     result[value.tag][tool_index][app_index][app_run_num][event.step] = value.simple_value
             os.remove(tmp_file)
 
-    apps = [a for a in apps if a not in excluded_apps]
+    #apps = [a for a in apps if a not in excluded_apps]
 
     for tag in tags:
         for tool_i in range(len(tools)):
@@ -191,7 +191,8 @@ def generate_all_coords(axes: List[List[Any]], axis_i: int = 0) -> List[Any]:
             yield [v] + h
 
 
-def nankstest(array: np.ndarray, axis: int, test_axis: int, cutoff: float = .05) -> np.ndarray:
+def nankstest(array: np.ndarray, axis: int, test_axis: int, test_ref_index: int,
+              alternative: str, cutoff: float = .05) -> np.ndarray:
     shape = array.shape
     axis = axis % len(shape)
     test_axis = test_axis % len(shape)
@@ -200,8 +201,8 @@ def nankstest(array: np.ndarray, axis: int, test_axis: int, cutoff: float = .05)
     for coord0 in generate_all_coords([[None] if i == axis or i == test_axis else list(range(shape[i]))
                                        for i in range(len(shape))]):
         coord1 = coord0.copy()
-        coord0[test_axis] = 0
-        coord1[test_axis] = 1
+        coord0[test_axis] = 1 - test_ref_index
+        coord1[test_axis] = test_ref_index
         coord0 = tuple(coord0)
         coord1 = tuple(coord1)
         array0 = array[coord0]
@@ -211,7 +212,7 @@ def nankstest(array: np.ndarray, axis: int, test_axis: int, cutoff: float = .05)
         if len(array0) == 0 or len(array1) == 0:
             test_result = 1
         else:
-            test_result = scipy.stats.kstest(array0, array1, alternative='less')[1]
+            test_result = scipy.stats.kstest(array0, array1, alternative=alternative)[1]
         result[coord0] = np.nan if test_result < cutoff else 0
         result[coord1] = result[coord0]
     return result
@@ -246,6 +247,10 @@ def max_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
     return process_logs(logs, partial(np.nanmax, axis=-1), axes=axes, reduce=True, **kwargs)
 
 
+def min_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
+    return process_logs(logs, partial(np.nanmin, axis=-1), axes=axes, reduce=True, **kwargs)
+
+
 def range_logs(logs: Logs, axes: List[int], **kwargs) -> Logs:
     return process_logs(logs, lambda a: np.maximum(0.00001, np.nanmax(a, axis=-1) - np.nanmin(a, axis=-1)), axes=axes,
                         reduce=True, **kwargs)
@@ -273,10 +278,12 @@ def error_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> L
         return process_logs(logs, partial(nanwerror, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
 
 
-def kstest_logs(logs: Logs, axes: List[int], test_axis: int, weights: Logs = None, **kwargs) -> Logs:
+def kstest_logs(logs: Logs, axes: List[int], test_axis: int, test_ref_index: int, alternative: str,
+                weights: Logs = None, **kwargs) -> Logs:
     if weights is not None:
         raise NotImplementedError('cannot compute weighted ks test')
-    return process_logs(logs, partial(nankstest, axis=-1, test_axis=test_axis - sum([a < test_axis for a in axes])),
+    return process_logs(logs, partial(nankstest, axis=-1, test_axis=test_axis - sum([a < test_axis for a in axes]),
+                                      test_ref_index=test_ref_index, alternative=alternative),
                         axes=axes, reduce=True, **kwargs)
 
 
@@ -289,6 +296,8 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
     parser.add_argument('--summary-axes', action='append', nargs='+', type=str, required=True)
     # only one param per action is supported for now
     parser.add_argument('--summary-param', action='append', type=str)
+    parser.add_argument('--kstest-alt', action='store', type=str, choices=['less', 'greater', 'two-sided'])
+    parser.add_argument('--kstest-ref', action='store', type=str, choices=args.tools)
     args = parser.parse_args(args.args[1:], namespace=args)
     assert (args.norm_type is not None) == (args.norm_axes is not None)
     assert args.norm_type is None or args.norm_ref is None or 'tool' not in args.norm_axes
@@ -334,7 +343,9 @@ def simple_analysis(logs: Logs, args: argparse.Namespace) -> AnalysisResult:
         errors = error_logs(logs, axes=summary_axes, **p_dict)
         results = (results[0], ((summary, errors), name_prefix + '_errors', summary_dim_vals))
         if len(dim_vals[0]) == 2 and 'weights' not in p_dict:
-            sig = kstest_logs(logs, axes=summary_axes, test_axis=0, **p_dict)
+            ks_ref_index = args.tools.index(args.kstest_ref)
+            sig = kstest_logs(logs, axes=summary_axes, test_axis=0, test_ref_index=ks_ref_index,
+                              alternative=args.kstest_alt, **p_dict)
             results = results + ((sig, name_prefix + '_sig', summary_dim_vals),)
     return results
 
@@ -348,15 +359,22 @@ parser.add_argument('--tools', action='store', nargs='+', type=str, required=Tru
 parser.add_argument('--apps-dir', action='store', type=str, required=True)
 parser.add_argument('--runs-per-app', action='store', type=int, required=True)
 parser.add_argument('--runs-per-app-per-tester', action='store', type=int, required=True)
+parser.add_argument('--excluded-apps-dir', action='store', type=str)
 parser.add_argument('--ignore-missing', action='store_true')
 parser.add_argument('--use-cache', action='store_true')
 parser.add_argument('args', action='store', nargs=argparse.REMAINDER, type=str)
 args = parser.parse_args()
 
-args.apps = [os.path.basename(apk)[:-4] for apk in glob.glob(f'{args.apps_dir}/*.apk')]
+
+def get_apks(dir: str) -> List[str]:
+    return [os.path.basename(apk)[:-4] for apk in glob.glob(f'{dir}/*.apk')]
+
+
+args.apps = get_apks(args.apps_dir)
+excluded_apps = None if args.excluded_apps_dir is None else get_apks(args.excluded_apps_dir)
 
 logs = read_logs(args.logs_dir, args.tags, args.tools, args.apps, args.runs_per_app, args.runs_per_app_per_tester,
-                 error_on_missing=not args.ignore_missing, from_cache=args.use_cache)
+                 error_on_missing=not args.ignore_missing, from_cache=args.use_cache, excluded_apps=excluded_apps)
 
 results = eval(args.analysis + '_analysis')(logs, args)
 for all_logs, name, dim_vals in results:
