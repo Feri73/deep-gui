@@ -595,13 +595,14 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
             return env
         else:
             phone_type = eval(phone_class)
-            if isinstance(phone_type, Browser):
-                conf = browser_configs
+            if phone_type is Browser:
+                env = RelevantActionEnvironment(
+                    collector, Browser(('tester' if is_tester else 'collector') + str(id),
+                                       browser_configs), action2pos, environment_configs)
             else:
-                conf = phone_configs
-            env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
-                                                                  5554 + 2 * agent_num, conf),
-                                            action2pos, environment_configs)
+                env = RelevantActionEnvironment(
+                    collector, phone_type(('tester' if is_tester else 'collector') + str(id), 
+                                          5554 + 2 * agent_num, phone_configs), action2pos, environment_configs)
             if use_logger:
                 env.add_callback(logger)
                 logger.set_environment(env)
