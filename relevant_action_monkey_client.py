@@ -169,8 +169,8 @@ class RelevantActionMonkeyClient(Environment):
         self.pinged = False
         type = action[2]
         action = self.action2pos(action)
-        y = action[1] * self.true_screen_shape[0] // self.screen_shape[0]
-        x = action[0] * self.true_screen_shape[1] // self.screen_shape[1]
+        y = int(action[1] * self.true_screen_shape[0] / self.screen_shape[0])
+        x = int(action[0] * self.true_screen_shape[1] / self.screen_shape[1])
         action = (x, y, action[2])
         if type == 0:
             print(f'{datetime.now()}: sending click on {action[0]}, {action[1]} to {self.server_port}')

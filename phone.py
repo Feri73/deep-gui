@@ -331,8 +331,8 @@ class Phone:
         return res
 
     def send_event(self, x: int, y: int, type: int) -> Optional[np.ndarray]:
-        y *= self.true_screen_shape[0] // self.screen_shape[0]
-        x *= self.true_screen_shape[1] // self.screen_shape[1]
+        y = int(y * self.true_screen_shape[0] / self.screen_shape[0])
+        x = int(x * self.true_screen_shape[1] / self.screen_shape[1])
         # better logging
         if type == 0:
             print(f'{datetime.now()}: phone {self.device_name}: click on {x},{y}')

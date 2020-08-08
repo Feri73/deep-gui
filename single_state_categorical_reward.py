@@ -298,6 +298,7 @@ class LearningAgent:
         self.strict_correction = cfg['strict_correction']
         self.batch_size = cfg['batch_size']
         self.epochs_per_version = cfg['epochs_per_version']
+        self.data_portion_per_epoch = cfg['data_portion_per_epoch']
         self.save_dir = cfg['save_dir']
         self.validation_dir = cfg['validation_dir']
 
@@ -494,6 +495,7 @@ class LearningAgent:
             print(f'{datetime.now()}: starting learning for experience version {version} in learner {self.id}')
             data = generator()
             validation_data = None if validation_generator is None else validation_generator()
+            data_size = int(data_size * self.data_portion_per_epoch)
             steps_per_epoch = int(data_size * self.epochs_per_version / self.batch_size / int(self.epochs_per_version))
             validation_steps = int(validation_data_size / self.batch_size)
 
@@ -549,7 +551,10 @@ class Coordinator(ABC, EnvironmentCallbacks):
 
         self.collector_creators = collector_creators
         self.learner_creator = learner_creator
-        self.tester_ids, self.tester_creators = zip(*tester_creators)
+        if len(tester_creators) > 0:
+            self.tester_ids, self.tester_creators = zip(*tester_creators)
+        else:
+            self.tester_ids, self.tester_creators = [], []
         self.tester_learner_creators = tester_learner_creators
 
         self.learner = None

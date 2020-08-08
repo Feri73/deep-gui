@@ -17,7 +17,7 @@ class ScreenPreprocessor(keras.layers.Layer):
         super().__init__(**kwargs)
 
     def call(self, screens, **kwargs):
-        screens = tf.cast(screens, tf.float32) / 255.0
+        screens = tf.cast(screens, tf.float32)
         if self.grayscale:
             screens = tf.image.rgb_to_grayscale(screens)
         screens = tf.image.crop_to_bounding_box(screens, *self.crop_top_left, *self.crop_size)
@@ -132,6 +132,7 @@ class UNetScreenEncoder(keras.layers.Layer):
                                    outputs=[net.get_layer(name).output for name in self.output_layer_names])
 
     def call(self, screens, **kwargs):
+        screens = keras.applications.mobilenet.preprocess_input(screens)
         return self.encoder(screens)
 
 

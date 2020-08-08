@@ -448,6 +448,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     tester_learner_configs['shuffle'] = True
     tester_learner_configs['save_dir'] = None
     tester_learner_configs['validation_dir'] = None
+    tester_learner_configs['data_portion_per_epoch'] = 1
     if is_tester and monkey_client_mode:
         tester_configs['weight_reset_frequency'] = None
     collector_logger_configs['dir'] = logs_dir
@@ -523,8 +524,9 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                 preds2 = both_preds[:, :, :, :, 1]
                 shape1 = np.prod(preds1.get_shape().as_list()[1:])
                 shape2 = np.prod(preds2.get_shape().as_list()[1:])
-                return tf.reduce_sum(keras.losses.binary_crossentropy(tf.reshape(preds1 * mask, (-1, shape1)),
-                                                                      tf.reshape(preds2 * mask2, (-1, shape2))))
+                return iic_coeff * tf.reduce_sum(
+                    keras.losses.binary_crossentropy(tf.reshape(preds1 * mask, (-1, shape1)),
+                                                     tf.reshape(preds2 * mask2, (-1, shape2))))
 
             iic_layer = keras.layers.Lambda(
                 lambda both_preds: tf.concat([tf.expand_dims(x, axis=-1) for x in both_preds], axis=-1),
