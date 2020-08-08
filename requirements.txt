@@ -8,3 +8,4 @@ tensorboard==1.15.0
 tensorflow==1.15.0
 tensorflow-estimator==1.15.1
 requests==2.22.0
+selenium==3.141.0

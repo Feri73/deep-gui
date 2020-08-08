@@ -15,7 +15,9 @@ from PIL import Image
 
 import readouts
 from environment import EnvironmentCallbacks, Environment
+# noinspection PyUnresolvedReferences
 from phone import DummyPhone, Phone
+from browser import Browser
 # noinspection PyUnresolvedReferences
 from predictors import ScreenPreprocessor, SimpleRewardPredictor, UNetRewardPredictor, RandomRewardPredictor
 from readouts import PredictionClusterer, better_reward_to_action, worse_reward_to_action, \
@@ -385,14 +387,15 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                  agent_option_probs: List[float], agent_clusterer_cfg_name: str,
                  weights_file: str) -> Union[DataCollectionAgent, LearningAgent]:
     cfg = copy.deepcopy(globals()['cfg'])
+    phone_class = cfg['phone_class']
     environment_configs = cfg['environment_configs']
     learner_configs = cfg['learner_configs']
     collector_configs = cfg['collector_configs']
     tester_configs = cfg['tester_configs']
     screen_preprocessor_configs = cfg['screen_preprocessor_configs']
     phone_configs = cfg['phone_configs']
+    browser_configs = cfg['browser_configs']
     collector_logger_configs = cfg['collector_logger_configs']
-    dummy_mode = cfg['dummy_mode']
     monkey_client_mode = cfg['monkey_client_mode']
     data_file_dir = cfg['data_file_dir']
     logs_dir = cfg['logs_dir']
@@ -437,6 +440,7 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
     phone_configs['crop_size'] = screen_preprocessor_crop_size
     phone_configs['apks_path'] = testers_apks_path if is_tester else collectors_apks_path
     phone_configs['clone_script_path'] = testers_clone_script if is_tester else collectors_clone_script
+    browser_configs['screen_shape'] = screen_shape
     collector_configs['file_dir'] = data_file_dir
     learner_configs['file_dir'] = data_file_dir
     tester_configs['weights_file'] = weights_file
@@ -590,9 +594,13 @@ def create_agent(id: int, agent_num: int, agent_name: str, is_learner: bool, is_
                                              monkey_client_configs)
             return env
         else:
-            phone_type = DummyPhone if dummy_mode else Phone
+            phone_type = eval(phone_class)
+            if isinstance(phone_type, Browser):
+                conf = browser_configs
+            else:
+                conf = phone_configs
             env = RelevantActionEnvironment(collector, phone_type(('tester' if is_tester else 'collector') + str(id),
-                                                                  5554 + 2 * agent_num, phone_configs),
+                                                                  5554 + 2 * agent_num, conf),
                                             action2pos, environment_configs)
             if use_logger:
                 env.add_callback(logger)
