@@ -479,6 +479,16 @@ class LearningAgent:
         if self.is_learning:
             self.stop_learning_callback = callback
 
+    def evaluate(self, checkpoints_dir: str, version: Union[int, List[int]]) -> None:
+        for checkpoint in glob.glob(f'{checkpoints_dir}/*.hdf5'):
+            validation_generator, validation_data_size = self.create_training_data(self.validation_dir, version)
+            validation_data = validation_generator()
+            validation_steps = int(validation_data_size / self.batch_size)
+            self.model.load_weights(checkpoint, by_name=True)
+            loss = self.model.evaluate(validation_data, steps=validation_steps)
+            print(f'eval res for {checkpoint}: {loss}')
+
+
     # add logs
     def learn(self, version: Union[int, List[int]], loss_threshold: int = None,
               batch_end_callback: Callable = None) -> None:
@@ -545,6 +555,7 @@ class Coordinator(ABC, EnvironmentCallbacks):
                  tester_learner_creators: List[Callable[[], Union[None, LearningAgent]]], cfg: Config):
         self.collector_version_start = cfg['collector_version_start']
         self.train = cfg['train']
+        self.evaluate_dir = cfg['evaluate_dir']
         self.pre_training = cfg['pre_training']
         self.collect_before_pre_training = cfg['collect_before_pre_training']
         self.sync_weight = cfg['sync_weight']
@@ -736,6 +747,8 @@ class Coordinator(ABC, EnvironmentCallbacks):
         self.tester_reset_weight_file = [None] * len(self.tester_learners)
         self.tester_in_learning = [False] * len(self.tester_learners)
         self.learner = self.learner_creator()
+        if self.evaluate_dir is not None:
+            self.learner.evaluate(self.evaluate_dir, list(range(self.collector_version_start)))
         if self.pre_training:
             self.learner.learn(list(range(self.collector_version_start)))
         if self.sync_weight:
