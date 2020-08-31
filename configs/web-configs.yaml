@@ -1,0 +1,250 @@
+collectors:
+  - [0, [0, 1]]
+  - [0, [0, .8]]
+  - [0, [0, .5]]
+  - [0, [0, .2]]
+  - [0, [0, 0, 0, 0, 0, 1]]
+testers:
+  - [0, [1], c95-e4, c95, e4]
+  - [10, [.7, .3], c99smax-e10, c99s, e10]
+  - [0, [.7, .3], c95max-e1, c95, e1]
+  - [0, [1], c97s-e4, c97s, e4]
+  - [0, [.7, .3], c95max-e4, c95, e4]
+  - [0, [.4, .4, 0, 0, 0, .2], c95maxrand-e4, c95, e4]
+  - [0, [.4, .4, 0, 0, 0, .2], c97maxrand-e4, c97, e4]
+  - [0, [0, .8, 0, 0, 0, .2], Maxrand-e4, default, e4]
+  - [0, [0, .6, 0, 0, 0, .4], maxrand-e4, default, e4]
+  - [0, [0, 1], max-e4, default, e4]
+  - [0, [0, 0, 0, 0, 0, 1], monkey]
+phone_class: Browser
+monkey_client_mode: False
+data_file_dir:
+logs_dir: version_9_8_15_2020/web_logs_test
+reset_logs: True
+weights_file:
+  learner:
+  e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
+          #e10: version_6_7_31_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-07-loss_0.19-val-loss_1.32.hdf5
+          #e10: version_6_7_31_2020/legacy2/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-10-loss_0.20-val-loss_0.29.hdf5
+collectors_apks_path:
+testers_apks_path: apks/open/v6/test
+collectors_clone_script:
+testers_clone_script: taskset -c 0 /home/ferisampad/clone_avd.sh tester_ref
+prediction_shape: [56, 56] #[224, 224]
+reward_predictor: [UNetRewardPredictor, unet]
+variance_reg_coeff: 0
+l1_reg_coeff: 0
+iic_coeff: 0
+iic_distorter_probabilities: [0, 1]
+distort_shift_max_value: 5
+prediction_normalizer: linear_normalizer
+use_logger: True
+action_prob_coeffs: [1., 0.3, 0.1]
+
+coordinator_configs:
+  train: False
+  pre_training: False
+  collect_before_pre_training: False
+  sync_weight: False
+  process_configs:
+    type: spawn
+    queue_size: 5
+
+collector_configs:
+  max_episodes: 1500
+  max_file_size: 10
+  meta_save_frequency: 10
+  version_start: 1
+
+tester_configs:
+  max_episodes: 3000
+  version_window: 10
+  max_file_size: 10
+  past_rewards_window: 20
+  past_rewards_threshold: .75
+  learn: False #here
+  loss_threshold: 0.05
+  file_dir: version_8_8_5_2020/otest_data_files_test
+  weight_reset_frequency: 300
+  learning_rate: 0.001
+  learner_configs:
+    batch_size: 32
+    correct_distributions: True
+    augmenting_correction: True
+    strict_correction: False
+    epochs_per_version: 10
+
+learner_configs:
+  batch_size: 50
+  shuffle: True
+  correct_distributions: True
+  augmenting_correction: False
+  strict_correction: True
+  epochs_per_version: 20
+  data_portion_per_epoch: 0.2
+  save_dir:
+  validation_dir:
+
+environment_configs:
+  action_type_count: 3
+  recreate_on_app: True
+  restart_after_install: True
+  steps_per_app: 300
+  steps_per_app_reopen: 300
+  steps_per_in_app_check: 1
+  in_app_check_trials: 3
+  force_app_on_top: True
+  black_screen_trials: 2
+  global_equality_threshold: 512
+  pixel_equality_threshold: 1
+  animation_monitor_time: 0
+  action_max_wait_time: 1
+  action_offset_wait_time: .5
+  action_freeze_wait_time: 0
+  screenshots_interval: 0.2
+  remove_bad_apps: False
+  shuffle_apps: True #
+  calculate_reward: False
+  start_phone_fresh: True
+  app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
+  app_end_callback: #kill -9 `cat .{device}.pid` || true
+  fatal_error_callback: #kill -10 `cat .{device}.pid` || true
+  fatal_error_handled_callback: #kill -12 `cat .{device}.pid` || true
+
+browser_configs:
+  window_size: [640, 480]
+  mozilla_path: /usr/bin/firefox
+  user_agent: Mozilla/5.0 (iPhone; U; CPU iPhone OS 3_0 like Mac OS X; en-us) AppleWebKit/528.18 (KHTML, like Gecko) Version/4.0 Mobile/7A341 Safari/528.16
+  query_max_length: 10
+  screenshots_dir: .
+  scroll_min_value: 200
+  scroll_max_value: 600
+  headless: True
+  apps:
+    - google.com
+          #    - youtube.com
+          #    - baidu.com
+          #    - qq.com
+    - facebook.com
+    - sohu.com
+    - taobao.com
+    - 360.cn
+    - amazon.com
+    - yahoo.com
+
+phone_configs:
+  screen_shape: [234, 224] #[854, 480]
+  dummy_mode_configs:
+    - 4
+    - 2
+    - 15
+    - 5
+    - 10
+    - 2
+    - 0
+    - 1
+    - 0
+    - .5
+  snapshot_load_wait_time: -5
+  install_wait_time: 10
+  app_start_max_wait_time: 15
+  after_app_start_wait_time: 10
+  app_exit_wait_time: 5 #30
+  phone_start_boot_max_wait_time: 300
+  phone_restart_kill_max_wait_time: 300
+  phone_boot_wait_time: 10
+  unlock: True
+  disable_input_methods: True
+  maintain_visited_activities: True
+  install_apks: False
+  avd_path: /home/ferisampad/.android/avd
+  aapt_path: /home/ferisampad/android-sdk/build-tools/29.0.2/aapt
+  adb_path: /home/ferisampad/android-sdk/platform-tools/adb
+  emulator_path: /home/ferisampad/android-sdk/emulator/emulator -no-window -no-audio
+  emma_jar_path: /home/ferisampad/emma.jar
+  screenshots_dir: .
+  grep_command: grep
+  timeout_template: 'timeout -t {}' #'timeout {}s' #'timeout -t {}'
+  apk_install_command: 'install -r' #'install -r -g' #'install -r'
+  app_stop_command: 'kill `pgrep -f {}`' #'am force-stop {}' #'kill `pgrep -f {}`'
+  current_activity_grep: mResumedActivity
+  current_activity_regex: '.*HistoryRecord{.+ (.+)}.*' #'.*ActivityRecord{.+ .+ (.+) .+}.*' #'.*HistoryRecord{.+ (.+)}.*'
+  is_in_app_grep: "-m 1 '* TaskRecord'" #'\"* TaskRecord\"' #"-m 1 '* TaskRecord'"
+  is_in_app_regex: '.*TaskRecord{.+ #\d+ .+ (.+)}' #'.*TaskRecord{.+#\d+ .+=(.+) .+StackId=.*}' #'.*TaskRecord{.+ #\d+ .+ (.+)}'
+  scroll_min_value: 100
+  scroll_max_value: 300
+  scroll_event_count: 5
+  keyboard_text_max_length: 15
+
+
+screen_preprocessor_configs:
+  crop_top_left: [10, 0] #[30, 0]
+  crop_size: [224, 224] #[824, 480]
+  resize_size: [224, 224]
+  grayscale: False
+  scale_color: False
+  equalize_background: False
+  contrast_alpha: -1
+
+simple_reward_predictor_configs:
+  screen_encoder_configs:
+    padding_type: SAME
+    kernel_sizes: [4, 2, 4, 4]
+    filter_nums: [8, 16, 32, 64]
+    stride_sizes: [1, 1, 1, 1]
+    maxpool_sizes: [1, 5, 2, 1]
+
+unet_reward_predictor_configs:
+  screen_encoder_configs:
+    inner_configs:
+      alpha: 0.5 #0.35
+      weights: imagenet
+    output_layer_names:
+      - block_16_project # 7
+      - block_13_expand_relu # 14
+      - block_6_expand_relu # 28
+        #      - block_3_expand_relu # 56
+        #      - block_1_expand_relu # 112
+
+  reward_decoder_configs:
+    filter_nums: [256, 128] #[30, 15] #[256, 128, 64, 32]
+    kernel_sizes: 3
+    stride_sizes: 2
+    padding_types: SAME
+
+random_reward_predictor_configs: {}
+  
+collector_logger_configs:
+  scalar_log_frequency: 1
+  image_log_frequency: 1
+  coverage_log_frequency: 150000
+  prediction_overlay_factor: 0.4
+  cluster_color_size: 2
+  steps_per_new_file: 300
+  log_preprocessed_screen: False
+  log_reward_prediction: True
+  chunk_start: 0
+
+clusterer_configs:
+  default:
+    start_clickable_threshold: 0.90
+    clickable_threshold_speed: 0 #.095
+    clickable_threshold_speed_step: 1 #300
+    speed_steps_per_clickable_threshold_reset: 1 #10
+    distance_threshold: 2.99 #8.99 #2.99
+    cluster_count_threshold: 4 #16 #4
+  c97s:
+    distance_threshold: 1.99
+    cluster_count_threshold: 6
+    start_clickable_threshold: 0.97
+  c97:
+    start_clickable_threshold: 0.97
+  c99:
+    start_clickable_threshold: 0.99
+  c99s:
+    distance_threshold: 1.99
+    cluster_count_threshold: 6
+    start_clickable_threshold: 0.99
+  c95:
+    start_clickable_threshold: 0.95
+

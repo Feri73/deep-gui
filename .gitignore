@@ -3,18 +3,9 @@
 
 # But not these files...
 !.gitignore
-!environment.py
-!phone.py
-!relevant_action.py
-!requirements.txt
-!utils.py
-!app_downloader.py
-!single_state_categorical_reward.py
-!tf_utils.py
-!predictors.py
-!readouts.py
-!parallelism.py
-!analyze_logs.py
-!relevant_action_monkey_client.py
-!main.py
-!browser.py
+!src
+!src/*.py
+!configs
+!configs/*.yaml
+!scripts
+!scripts/*

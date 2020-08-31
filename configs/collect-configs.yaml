@@ -1,0 +1,220 @@
+collectors: #
+  - [0, [0, 1]]
+  - [0, [0, .8]]
+  - [0, [0, .5]]
+  - [0, [0, .2]]
+  - [15, [0, 0, 0, 0, 0, 1]]
+testers:
+  - [0, [1], c95-e8, c95, e8]
+  - [0, [.7, .3], c95max-e8, c95, e8]
+  - [0, [.4, .4, 0, 0, 0, .2], c95maxrand-e8, c95, e8]
+  - [0, [.4, .4, 0, 0, 0, .2], c97maxrand-e8, c97, e8]
+  - [0, [0, .8, 0, 0, 0, .2], Maxrand-e8, default, e8]
+  - [0, [0, .6, 0, 0, 0, .4], maxrand-e8, default, e8]
+  - [0, [0, 1], max-e8, default, e8]
+  - [0, [0, 0, 0, 0, 0, 1], monkey]
+phone_class: Phone
+monkey_client_mode: False
+data_file_dir: version_9_8_15_2020/gplay_data_files_val
+logs_dir: version_9_8_15_2020/gplay_logs_collection_val
+reset_logs: True
+weights_file:
+  learner:
+collectors_apks_path: apks/gplay/collection/val
+testers_apks_path:
+collectors_clone_script: taskset -c 1 /home/ferisampad/clone_avd.sh collector_ref
+testers_clone_script:
+prediction_shape: [56, 56]
+reward_predictor: [RandomRewardPredictor, random]
+variance_reg_coeff: 0
+l1_reg_coeff: 0
+iic_coeff: 0
+iic_distorter_probabilities: [0, 1]
+distort_shift_max_value: 50
+prediction_normalizer: linear_normalizer
+use_logger: True
+action_prob_coeffs: [1., .3, .1, .1] #
+
+coordinator_configs:
+  train: False
+  pre_training: False
+  collect_before_pre_training: False
+  sync_weight: False
+  process_configs:
+    type: spawn
+    queue_size: 5
+
+collector_configs:
+  max_episodes: 17000
+  max_file_size: 1000
+  meta_save_frequency: 10
+  version_start: 1
+
+tester_configs:
+  max_episodes: 15000000000
+  version_window: 10
+  max_file_size: 10
+  past_rewards_window: 20
+  past_rewards_threshold: .75
+  learn: False #here
+  loss_threshold: 0.05
+  file_dir: bullshit
+  weight_reset_frequency:
+  learning_rate: 0.001
+  learner_configs:
+    batch_size: 32
+    correct_distributions: True
+    augmenting_correction: True
+    strict_correction: False
+    epochs_per_version: 10
+
+learner_configs:
+  batch_size: 32
+  shuffle: True
+  correct_distributions: True
+  augmenting_correction: False
+  strict_correction: True
+  epochs_per_version: 10
+  data_portion_per_epoch: 1
+  save_dir:
+  validation_dir: 
+
+environment_configs:
+  action_type_count: 4 #
+  recreate_on_app: True
+  restart_after_install: False
+  steps_per_app: 1000
+  steps_per_app_reopen: 1000
+  steps_per_in_app_check: 3
+  in_app_check_trials: 2
+  force_app_on_top: True
+  black_screen_trials: 2
+  global_equality_threshold: 512
+  pixel_equality_threshold: 1
+  animation_monitor_time: 5 #10 mark
+  action_max_wait_time: 15 #2 mark
+  action_offset_wait_time: 5 #1 mark
+  action_freeze_wait_time: 2 #1 mark
+  screenshots_interval: 0.2
+  remove_bad_apps: True
+  shuffle_apps: True
+  calculate_reward: True
+  start_phone_fresh: True
+  app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
+  app_end_callback: #kill -9 `cat .{device}.pid` || true
+  fatal_error_callback: #kill -10 `cat .{device}.pid` || true
+  fatal_error_handled_callback: #kill -12 `cat .{device}.pid` || true
+
+browser_configs:
+  window_size: [640, 480]
+  mozilla_path: /usr/bin/firefox
+  user_agent: Mozilla/5.0 (iPhone; U; CPU iPhone OS 3_0 like Mac OS X; en-us) AppleWebKit/528.18 (KHTML, like Gecko) Version/4.0 Mobile/7A341 Safari/528.16
+  query_max_length: 10
+  screenshots_dir: .
+  scroll_min_value: 200
+  scroll_max_value: 600
+  headless: True
+  apps:
+
+phone_configs:
+  screen_shape: [234, 224]
+  dummy_mode_configs:
+    - 4
+    - 2
+    - 15
+    - 5
+    - 10
+    - 2
+    - 0
+    - 1
+    - 0
+    - .5
+  snapshot_load_wait_time: -5
+  install_wait_time: 10
+  app_start_max_wait_time: 15
+  after_app_start_wait_time: 10
+  app_exit_wait_time: 5 #30
+  phone_start_boot_max_wait_time: 300
+  phone_restart_kill_max_wait_time: 300
+  phone_boot_wait_time: 10
+  unlock: False #True
+  disable_input_methods: True
+  maintain_visited_activities: False
+  install_apks: False
+  avd_path: /home/ferisampad/.android/avd
+  aapt_path: /home/ferisampad/android-sdk/build-tools/29.0.2/aapt
+  adb_path: /home/ferisampad/android-sdk/platform-tools/adb
+  emulator_path: /home/ferisampad/android-sdk/emulator/emulator -no-window -no-audio
+  emma_jar_path: /home/ferisampad/emma.jar
+  screenshots_dir: .
+  grep_command: grep
+  timeout_template: 'timeout {}s' #
+  apk_install_command: 'install -r -g' #
+  app_stop_command: 'am force-stop {}' #
+  current_activity_grep: mResumedActivity
+  current_activity_regex: '.*ActivityRecord{.+ .+ (.+) .+}.*' #
+  is_in_app_grep: '\"* TaskRecord\"' #
+  is_in_app_regex: '.*TaskRecord{.+#\d+ .+=(.+) .+StackId=.*}' #
+  scroll_min_value: 100
+  scroll_max_value: 300
+  scroll_event_count: 5
+  keyboard_text_max_length: 15
+
+
+screen_preprocessor_configs:
+  crop_top_left: [10, 0]
+  crop_size: [224, 224]
+  resize_size: [224, 224]
+  grayscale: False
+  scale_color: False
+  equalize_background: False
+  contrast_alpha: -1
+
+simple_reward_predictor_configs:
+  screen_encoder_configs:
+    padding_type: SAME
+    kernel_sizes: [4, 2, 4, 4]
+    filter_nums: [8, 16, 32, 64]
+    stride_sizes: [1, 1, 1, 1]
+    maxpool_sizes: [1, 5, 2, 1]
+
+unet_reward_predictor_configs:
+  screen_encoder_configs:
+    inner_configs:
+      alpha: 0.50
+      weights: imagenet
+    output_layer_names:
+      - block_16_project # 7
+      - block_13_expand_relu # 14
+      - block_6_expand_relu # 28
+        #      - block_3_expand_relu # 56
+        #      - block_1_expand_relu # 112
+
+  reward_decoder_configs:
+    filter_nums: [256, 128]
+    kernel_sizes: 3
+    stride_sizes: 2
+    padding_types: SAME
+
+random_reward_predictor_configs: {}
+  
+collector_logger_configs:
+  scalar_log_frequency: 1
+  image_log_frequency: 1
+  coverage_log_frequency: 1500000
+  prediction_overlay_factor: 0.4
+  cluster_color_size: 2
+  steps_per_new_file: 1000
+  log_preprocessed_screen: True
+  log_reward_prediction: False
+  chunk_start: 0
+
+clusterer_configs:
+  default:
+    start_clickable_threshold: 0.90
+    clickable_threshold_speed: 0 #.095
+    clickable_threshold_speed_step: 1 #300
+    speed_steps_per_clickable_threshold_reset: 1 #10
+    distance_threshold: 2.99
+    cluster_count_threshold: 4
+
