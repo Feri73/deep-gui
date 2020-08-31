@@ -365,7 +365,8 @@ class Phone:
             print(f'{datetime.now()}: phone {self.device_name}: writing "{text}" on {x},{y}')
             # self.adb(f'emu event mouse {x} {y} 0 1')
             # self.adb(f'emu event mouse {x} {y} 0 0')
-            self.adb(f'emu event text {text}')
+            # self.adb(f'emu event text {text}')
+            self.adb(f'shell input text {text}')
             self.send_action_metadata(text)
             return None
         raise NotImplementedError()

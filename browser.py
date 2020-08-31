@@ -27,13 +27,10 @@ class Browser:
         self.screenshots_dir = cfg['screenshots_dir']
         self.scroll_min_value = cfg['scroll_min_value']
         self.scroll_max_value = cfg['scroll_max_value']
-        self.apps_count = cfg['apps_count']
+        apps = cfg['apps']
         self.headless = cfg['headless']
-
         
-        self.app_names =[''.join(random.choices(string.ascii_letters + string.digits,
-                                                k=random.randint(1, self.query_max_length))) 
-                         for _ in range(self.apps_count)]
+        self.app_names = apps
         self.apk_names = self.app_names.copy()
         self.maintain_visited_activities = True
         self.visited_activities = set()
@@ -55,12 +52,15 @@ class Browser:
         raise NotImplementedError()
 
     def is_in_app(self, app_name: str, force_front: bool) -> bool:
-        return app_name == self.current_app
+        return app_name in self.driver.current_url
+        #return app_name == self.current_app
 
     def is_booted(self):
         return True
 
     def restart(self, recreate_phone: bool = False) -> None:
+        self.recreate_emulator()
+        self.start_phone()
         return
 
     def start_phone(self, fresh: bool = False) -> None:
@@ -93,7 +93,7 @@ class Browser:
 
     def open_app(self, app_name: str) -> None:
         self.current_app = app_name
-        self.driver.get(f'https://google.com/search?q={app_name}')
+        self.driver.get('https://' + app_name) #f'https://google.com/search?q={app_name}')
 
     def screenshot(self, perform_checks: bool = False) -> np.ndarray:
         self.visited_activities.add(self.current_app + '.' + self.driver.current_url)
