@@ -6,7 +6,7 @@ collectors:
   - [0, [0, 0, 0, 0, 0, 1]]
 testers:
   - [0, [1], c95-e4, c95, e4]
-  - [10, [.7, .3], c99smax-e10, c99s, e10]
+  - [0, [.7, .3], c99smax-e8, c99s, e1] #
   - [0, [.7, .3], c95max-e1, c95, e1]
   - [0, [1], c97s-e4, c97s, e4]
   - [0, [.7, .3], c95max-e4, c95, e4]
@@ -15,15 +15,17 @@ testers:
   - [0, [0, .8, 0, 0, 0, .2], Maxrand-e4, default, e4]
   - [0, [0, .6, 0, 0, 0, .4], maxrand-e4, default, e4]
   - [0, [0, 1], max-e4, default, e4]
-  - [0, [0, 0, 0, 0, 0, 1], monkey]
+  - [20, [0, 0, 0, 0, 0, 1], monkey] #
 phone_class: Browser
 monkey_client_mode: False
 data_file_dir:
-logs_dir: version_9_8_15_2020/web_logs_test
+logs_dir: version_8_8_5_2020/web_logs_test
 reset_logs: True
 weights_file:
   learner:
-  e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
+  e1: version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5 #open_model_unet_var_0_l1_0_iic_0_weight_no_pred_56/49-01-loss_0.42-val-loss_1.22.hdf5 #open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
+          #e8: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_01_weight_yes_pred_56_aug_yes/49-08-loss_0.82-val-loss_1.48.hdf5
+          #e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
           #e10: version_6_7_31_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-07-loss_0.19-val-loss_1.32.hdf5
           #e10: version_6_7_31_2020/legacy2/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-10-loss_0.20-val-loss_0.29.hdf5
 collectors_apks_path:
@@ -31,7 +33,7 @@ testers_apks_path: apks/open/v6/test
 collectors_clone_script:
 testers_clone_script: taskset -c 0 /home/ferisampad/clone_avd.sh tester_ref
 prediction_shape: [56, 56] #[224, 224]
-reward_predictor: [UNetRewardPredictor, unet]
+reward_predictor: [RandomRewardPredictor, random] #[UNetRewardPredictor, unet]
 variance_reg_coeff: 0
 l1_reg_coeff: 0
 iic_coeff: 0
@@ -57,7 +59,7 @@ collector_configs:
   version_start: 1
 
 tester_configs:
-  max_episodes: 3000
+  max_episodes: 9000
   version_window: 10
   max_file_size: 10
   past_rewards_window: 20
@@ -89,8 +91,8 @@ environment_configs:
   action_type_count: 3
   recreate_on_app: True
   restart_after_install: True
-  steps_per_app: 300
-  steps_per_app_reopen: 300
+  steps_per_app: 600
+  steps_per_app_reopen: 600
   steps_per_in_app_check: 1
   in_app_check_trials: 3
   force_app_on_top: True
@@ -103,7 +105,7 @@ environment_configs:
   action_freeze_wait_time: 0
   screenshots_interval: 0.2
   remove_bad_apps: False
-  shuffle_apps: True #
+  shuffle_apps: False
   calculate_reward: False
   start_phone_fresh: True
   app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
@@ -122,15 +124,25 @@ browser_configs:
   headless: True
   apps:
     - google.com
-          #    - youtube.com
-          #    - baidu.com
-          #    - qq.com
-    - facebook.com
-    - sohu.com
-    - taobao.com
-    - 360.cn
+    - youtube.com
     - amazon.com
     - yahoo.com
+    - facebook.com
+    - reddit.com
+    - zoom.us
+    - wikipedia.org
+    - myshopify.com
+    - ebay.com
+    - netflix.com
+    - bing.com
+    - office.com
+    - live.com
+    - twitch.tv
+      #    - microsoft.com
+      #    - instagram.com
+      #    - chase.com
+      #    - chaturbate.com
+      #    - zillow.com
 
 phone_configs:
   screen_shape: [234, 224] #[854, 480]
@@ -178,8 +190,8 @@ phone_configs:
 
 
 screen_preprocessor_configs:
-  crop_top_left: [10, 0] #[30, 0]
-  crop_size: [224, 224] #[824, 480]
+  crop_top_left: [0, 0] #[10, 0] #[30, 0]
+  crop_size: [234, 224] #[224, 224] #[824, 480]
   resize_size: [224, 224]
   grayscale: False
   scale_color: False
@@ -197,7 +209,7 @@ simple_reward_predictor_configs:
 unet_reward_predictor_configs:
   screen_encoder_configs:
     inner_configs:
-      alpha: 0.5 #0.35
+      alpha: 0.35 #0.5 #0.35
       weights: imagenet
     output_layer_names:
       - block_16_project # 7
@@ -207,7 +219,7 @@ unet_reward_predictor_configs:
         #      - block_1_expand_relu # 112
 
   reward_decoder_configs:
-    filter_nums: [256, 128] #[30, 15] #[256, 128, 64, 32]
+    filter_nums: [30, 15] #[256, 128] #[30, 15] #[256, 128, 64, 32]
     kernel_sizes: 3
     stride_sizes: 2
     padding_types: SAME
@@ -220,7 +232,7 @@ collector_logger_configs:
   coverage_log_frequency: 150000
   prediction_overlay_factor: 0.4
   cluster_color_size: 2
-  steps_per_new_file: 300
+  steps_per_new_file: 600
   log_preprocessed_screen: False
   log_reward_prediction: True
   chunk_start: 0
@@ -233,6 +245,9 @@ clusterer_configs:
     speed_steps_per_clickable_threshold_reset: 1 #10
     distance_threshold: 2.99 #8.99 #2.99
     cluster_count_threshold: 4 #16 #4
+  c90s:
+    distance_threshold: 1.99
+    cluster_count_threshold: 6
   c97s:
     distance_threshold: 1.99
     cluster_count_threshold: 6

@@ -15,8 +15,8 @@ testers:
   - [0, [0, 0, 0, 0, 0, 1], monkey]
 phone_class: Phone
 monkey_client_mode: False
-data_file_dir: version_6_7_31_2020/open_data_files_train #version_9_8_15_2020/gplay_data_files_train
-logs_dir:  version_6_7_31_2020/open_logs_train #version_9_8_15_2020/gplay_logs_train
+data_file_dir:  version_9_8_15_2020/gplay_data_files_train
+logs_dir:  version_9_8_15_2020/gplay_logs_train
 reset_logs: False
 weights_file:
   learner:
@@ -37,8 +37,8 @@ action_prob_coeffs: [1., 1., 1.]
 
 coordinator_configs:
   train: False
-  evaluate_dir: version_6_7_31_2020/open_model_unet_alpha_05_var_0_l1_0_iic_01_weight_no_pred_56_aug_yes #
-  pre_training: False # True
+  evaluate_dir: version_6_7_31_2020/open_model_unet_alpha_05_var_0_l1_0_iic_01_weight_no_pred_56_aug_yes
+  pre_training: True
   collect_before_pre_training: False
   sync_weight: False
   process_configs:
@@ -70,15 +70,15 @@ tester_configs:
     epochs_per_version: 10
 
 learner_configs:
-  batch_size: 32 #
+  batch_size: 32
   shuffle: True
   correct_distributions: True
   augmenting_correction: True #
   strict_correction: True
   epochs_per_version: 50
   data_portion_per_epoch: 0.2
-  save_dir: #version_6_7_31_2020/open_model_unet_alpha_05_var_0_l1_0_iic_01_weight_no_pred_56_aug_yes #version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_no_pred_56_aug_yes
-  validation_dir: version_6_7_31_2020/open_data_files_val #version_6_7_31_2020/wrong_open_data_files_val #version_6_7_31_2020/open_data_files_val #version_9_8_15_2020/gplay_data_files_val
+  save_dir: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_01_weight_yes_pred_56_aug_yes
+  validation_dir: version_9_8_15_2020/gplay_data_files_val
 
 environment_configs:
   action_type_count: 3
@@ -183,7 +183,7 @@ unet_reward_predictor_configs:
   screen_encoder_configs:
     inner_configs:
       alpha: 0.50 #0.35
-      weights: #imagenet
+      weights: imagenet
     output_layer_names:
       - block_16_project # 7
       - block_13_expand_relu # 14

@@ -19,17 +19,18 @@ testers:
 phone_class: Phone
 monkey_client_mode: False
 data_file_dir:
-logs_dir: version_9_8_15_2020/open_logs_test
+logs_dir: version_10_8_22_2020/tmp_logs_test
 reset_logs: True
 weights_file:
   learner:
+  e1: #version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
   #  e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_01_weight_yes_pred_56_aug_yes/49-08-loss_0.82-val-loss_1.48.hdf5
   # e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
-  e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-16-loss_0.28-val-loss_0.75.hdf5
+  e10: version_10_8_22_2020/model_weighted/49-10-loss_0.33-val-loss_1.84.hdf5 #version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-16-loss_0.28-val-loss_0.75.hdf5
   #  e10: version_6_7_31_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/1/49-03-loss_0.29-val-loss_1.02.hdf5
   #e10: version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
 collectors_apks_path:
-testers_apks_path: apks/open/v6/tmp
+testers_apks_path: apks/open/v6/tmp #
 collectors_clone_script:
 testers_clone_script: taskset -c 0 /home/ferisampad/clone_avd.sh tester_ref
 prediction_shape: [56, 56] #[224, 224]
@@ -66,7 +67,7 @@ tester_configs:
   past_rewards_threshold: .75
   learn: False #here
   loss_threshold: 0.05
-  file_dir: version_8_8_5_2020/otest_data_files_test
+  file_dir: version_10_8_22_2020/tmp_data_files_test
   weight_reset_frequency: 300
   learning_rate: 0.001
   learner_configs:
@@ -105,7 +106,7 @@ environment_configs:
   action_freeze_wait_time: 0
   screenshots_interval: 0.2
   remove_bad_apps: False
-  shuffle_apps: False
+  shuffle_apps: True
   calculate_reward: False
   start_phone_fresh: True
   app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
@@ -220,7 +221,7 @@ collector_logger_configs:
   scalar_log_frequency: 1
   image_log_frequency: 1
   coverage_log_frequency: 150000
-  prediction_overlay_factor: 0.4
+  prediction_overlay_factor: 0.00001 #0.4
   cluster_color_size: 2
   steps_per_new_file: 300
   log_preprocessed_screen: False
