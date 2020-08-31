@@ -638,6 +638,7 @@ pos_reward = 1
 neg_reward = 0
 with open('configs.yaml') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
+print(cfg)
 collectors = cfg['collectors']
 testers = cfg['testers']
 reset_logs = cfg['reset_logs']

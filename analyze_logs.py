@@ -232,6 +232,17 @@ def nanwstd(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
     return nanwmean((array - np.expand_dims(avg, axis=axis)) ** 2, weights, axis) ** .5
 
 
+def nanentropy(array: np.ndarray, axis: int, bins: int, _range: Tuple[float, float]) -> np.ndarray:
+    base=2
+    assert axis == -1
+    counts = np.zeros((*array.shape[:-1], bins))
+    for coord in generate_all_coords([list(range(shape)) for shape in array.shape[:-1]]):
+        coord = tuple(coord)
+        arr = array[coord]
+        counts[coord] = np.histogram(arr, bins=bins, range=_range)[0]
+    return stats.entropy(counts, base=base, axis=axis) 
+
+
 def nanwerror(array: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
     weights = np.ones_like(array) * weights
     inds = np.isnan(array)
@@ -261,6 +272,11 @@ def mean_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Lo
         return process_logs(logs, partial(np.nanmean, axis=-1), axes=axes, reduce=True, **kwargs)
     else:
         return process_logs(logs, partial(nanwmean, axis=-1), axes=axes, reduce=True, weights=weights, **kwargs)
+
+
+def entropy_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
+    assert weights is None
+    return process_logs(logs, partial(nanentropy, bins=20, _range=(0., 1.), axis=-1), axes=axes, reduce=True, **kwargs)
 
 
 def std_logs(logs: Logs, axes: List[int], weights: Logs = None, **kwargs) -> Logs:
