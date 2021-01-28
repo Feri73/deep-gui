@@ -3,7 +3,6 @@ apks_dir=$2
 exc_apks_dir=$3
 simplest=$4
 
-#echo WARNING!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 rm .analysis_cache.pck
 cache=0
 

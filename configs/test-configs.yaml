@@ -1,39 +1,19 @@
-collectors:
-  - [0, [0, 1]]
-  - [0, [0, .8]]
-  - [0, [0, .5]]
-  - [0, [0, .2]]
-  - [0, [0, 0, 0, 0, 0, 1]]
+collectors: []
 testers:
-  - [0, [1], c95-e4, c95, e4]
-  - [1, [.7, .3], c99smax-e10, c99s, e10]
-  - [0, [.7, .3], c95max-e1, c95, e1]
-  - [0, [1], c97s-e4, c97s, e4]
-  - [0, [.7, .3], c95max-e4, c95, e4]
-  - [0, [.4, .4, 0, 0, 0, .2], c95maxrand-e4, c95, e4]
-  - [0, [.4, .4, 0, 0, 0, .2], c97maxrand-e4, c97, e4]
-  - [0, [0, .8, 0, 0, 0, .2], Maxrand-e4, default, e4]
-  - [0, [0, .6, 0, 0, 0, .4], maxrand-e4, default, e4]
-  - [0, [0, 1], max-e4, default, e4]
-  - [0, [0, 0, 0, 0, 0, 1], monkey]
+  - [2, [.7, .3], c99smax-e10, c99s, e10]
 phone_class: Phone
 monkey_client_mode: False
 data_file_dir:
-logs_dir: version_10_8_22_2020/tmp_logs_test
+logs_dir: ../experiments/test_logs
 reset_logs: True
 weights_file:
   learner:
-  e1: #version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
-  #  e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_01_weight_yes_pred_56_aug_yes/49-08-loss_0.82-val-loss_1.48.hdf5
-  # e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
-  e10: version_10_8_22_2020/model_weighted/49-10-loss_0.33-val-loss_1.84.hdf5 #version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-16-loss_0.28-val-loss_0.75.hdf5
-  #  e10: version_6_7_31_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/1/49-03-loss_0.29-val-loss_1.02.hdf5
-  #e10: version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
+  e10: ../experiments/model/49-06-loss_0.02-val-loss_0.31.hdf5
 collectors_apks_path:
-testers_apks_path: apks/open/v6/tmp #
+testers_apks_path: ../apks/ts
 collectors_clone_script:
-testers_clone_script: taskset -c 0 /home/ferisampad/clone_avd.sh tester_ref
-prediction_shape: [56, 56] #[224, 224]
+testers_clone_script: taskset -c 0 /home/$USER/deep-gui/scripts/clone_avd.sh tester_ref
+prediction_shape: [56, 56]
 reward_predictor: [UNetRewardPredictor, unet]
 variance_reg_coeff: 0
 l1_reg_coeff: 0
@@ -46,6 +26,7 @@ action_prob_coeffs: [1., 0.3, 0.1]
 
 coordinator_configs:
   train: False
+  evaluate_dir:
   pre_training: False
   collect_before_pre_training: False
   sync_weight: False
@@ -65,9 +46,9 @@ tester_configs:
   max_file_size: 10
   past_rewards_window: 20
   past_rewards_threshold: .75
-  learn: False #here
+  learn: False
   loss_threshold: 0.05
-  file_dir: version_10_8_22_2020/tmp_data_files_test
+  file_dir: ../experiments/data_file_test
   weight_reset_frequency: 300
   learning_rate: 0.001
   learner_configs:
@@ -109,10 +90,10 @@ environment_configs:
   shuffle_apps: True
   calculate_reward: False
   start_phone_fresh: True
-  app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
-  app_end_callback: #kill -9 `cat .{device}.pid` || true
-  fatal_error_callback: #kill -10 `cat .{device}.pid` || true
-  fatal_error_handled_callback: #kill -12 `cat .{device}.pid` || true
+  app_start_callback:
+  app_end_callback:
+  fatal_error_callback:
+  fatal_error_handled_callback:
 
 browser_configs:
   window_size: [640, 480]
@@ -124,10 +105,6 @@ browser_configs:
   scroll_max_value: 600
   headless: True
   apps:
-          #    - google.com
-          #    - youtube.com
-          #    - baidu.com
-          #    - qq.com
     - facebook.com
     - sohu.com
     - taobao.com
@@ -136,7 +113,7 @@ browser_configs:
     - yahoo.com
 
 phone_configs:
-  screen_shape: [234, 224] #[854, 480]
+  screen_shape: [234, 224]
   dummy_mode_configs:
     - 4
     - 2
@@ -152,7 +129,7 @@ phone_configs:
   install_wait_time: 10
   app_start_max_wait_time: 15
   after_app_start_wait_time: 10
-  app_exit_wait_time: 5 #30
+  app_exit_wait_time: 5
   phone_start_boot_max_wait_time: 300
   phone_restart_kill_max_wait_time: 300
   phone_boot_wait_time: 10
@@ -160,11 +137,11 @@ phone_configs:
   disable_input_methods: True
   maintain_visited_activities: True
   install_apks: False
-  avd_path: /home/ferisampad/.android/avd
-  aapt_path: /home/ferisampad/android-sdk/build-tools/29.0.2/aapt
-  adb_path: /home/ferisampad/android-sdk/platform-tools/adb
-  emulator_path: /home/ferisampad/android-sdk/emulator/emulator -no-window -no-audio
-  emma_jar_path: /home/ferisampad/emma.jar
+  avd_path: /home/$USER/.android/avd
+  aapt_path: /home/$USER/android-sdk/build-tools/30.0.3/aapt
+  adb_path: /home/$USER/android-sdk/platform-tools/adb
+  emulator_path: /home/$USER/android-sdk/emulator/emulator -no-window -no-audio
+  emma_jar_path: /home/$USER/deep-gui/scripts/emma.jar
   screenshots_dir: .
   grep_command: grep
   timeout_template: 'timeout -t {}' #'timeout {}s' #'timeout -t {}'
@@ -181,8 +158,8 @@ phone_configs:
 
 
 screen_preprocessor_configs:
-  crop_top_left: [10, 0] #[30, 0]
-  crop_size: [224, 224] #[824, 480]
+  crop_top_left: [10, 0]
+  crop_size: [224, 224]
   resize_size: [224, 224]
   grayscale: False
   scale_color: False
@@ -200,17 +177,15 @@ simple_reward_predictor_configs:
 unet_reward_predictor_configs:
   screen_encoder_configs:
     inner_configs:
-      alpha: 0.5 #0.35
+      alpha: 0.5
       weights: imagenet
     output_layer_names:
-      - block_16_project # 7
-      - block_13_expand_relu # 14
-      - block_6_expand_relu # 28
-        #      - block_3_expand_relu # 56
-        #      - block_1_expand_relu # 112
+      - block_16_project
+      - block_13_expand_relu
+      - block_6_expand_relu
 
   reward_decoder_configs:
-    filter_nums: [256, 128] #[30, 15] #[256, 128, 64, 32]
+    filter_nums: [256, 128]
     kernel_sizes: 3
     stride_sizes: 2
     padding_types: SAME
@@ -221,7 +196,7 @@ collector_logger_configs:
   scalar_log_frequency: 1
   image_log_frequency: 1
   coverage_log_frequency: 150000
-  prediction_overlay_factor: 0.00001 #0.4
+  prediction_overlay_factor: 0.00001
   cluster_color_size: 2
   steps_per_new_file: 300
   log_preprocessed_screen: False
@@ -231,11 +206,11 @@ collector_logger_configs:
 clusterer_configs:
   default:
     start_clickable_threshold: 0.90
-    clickable_threshold_speed: 0 #.095
-    clickable_threshold_speed_step: 1 #300
-    speed_steps_per_clickable_threshold_reset: 1 #10
-    distance_threshold: 2.99 #8.99 #2.99
-    cluster_count_threshold: 4 #16 #4
+    clickable_threshold_speed: 0
+    clickable_threshold_speed_step: 1
+    speed_steps_per_clickable_threshold_reset: 1
+    distance_threshold: 2.99
+    cluster_count_threshold: 4
   c97s:
     distance_threshold: 1.99
     cluster_count_threshold: 6

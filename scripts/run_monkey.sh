@@ -8,12 +8,11 @@ use_deep=$6
 run_count=$7
 base_dir=$8
 port=$((5554 + 2 * $id))
-adb="/home/ferisampad/android-sdk/platform-tools/adb -s emulator-$port"
-emulator=/home/ferisampad/android-sdk/emulator/emulator
-aapt=/home/ferisampad/android-sdk/build-tools/29.0.2/aapt
+adb="/home/$USER/android-sdk/platform-tools/adb -s emulator-$port"
+emulator=/home/$USER/android-sdk/emulator/emulator
+aapt=/home/$USER/android-sdk/build-tools/30.0.3/aapt
 logcat_base_dir=$base_dir/logcat_$logs_name
 coverage_base_dir=$base_dir/coverage_$logs_name
-# actions_base_dir=$base_dir/actions_$log_name
 
 # in seconds
 install_wait=10
@@ -81,7 +80,7 @@ start_emul(){
 recreate_emul(){
 	rm -rf ~/.android/avd/$name.avd
 	rm ~/.android/avd/$name.ini
-	taskset -c 0 ~/clone_avd.sh tester_ref $name
+	taskset -c 0 ./clone_avd.sh tester_ref $name
 }
 
 run_app_exp() {
@@ -124,8 +123,6 @@ run_app_exp() {
 		monkey_args=""
 	fi
 
-	# actions_dir=$actions_base_dir/$(basename $apk)/$round
-	# mkdir -p $actions_dir
 		
 	$adb shell input keyevent 82
 	#$adb shell ime disable com.android.inputmethod.pinyin/.PinyinIME

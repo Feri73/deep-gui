@@ -4,10 +4,9 @@ dir=$3
 parent_pid=$4
 base_apk=$(basename $apk)
 port=`ps aux | grep "\-a[v]d $name" | sed -n 's/.*-ports \(.*\),.*/\1/p'`
-adb="/home/ferisampad/android-sdk/platform-tools/adb -s emulator-$port"
+adb="/home/$USER/android-sdk/platform-tools/adb -s emulator-$port"
 
 freq=60
-#freq=20
 delta_i=1
 #in seconds
 update_timeout=5
@@ -26,7 +25,7 @@ on_fatal_handled(){
 call_update_logs(){
 	emma_fail_cnt=$(</dev/shm/${name}_emma_fail_cnt)
 	local cur_i=$i
-	timeout ${update_timeout}s bash -c "/home/ferisampad/update_logs.sh $cur_i \"$coverage_dir\" \"$screenshots_dir\" \"$merged_path\" \"$apk\" \"$adb\""
+	timeout ${update_timeout}s bash -c "/home/$USER/deep-gui/scripts/update_logs.sh $cur_i \"$coverage_dir\" \"$screenshots_dir\" \"$merged_path\" \"$apk\" \"$adb\""
 	exit_status=$?
         if [[ $exit_status -eq 124 ]]; then
                 echo nan > $coverage_dir/$cur_i.ec.txt

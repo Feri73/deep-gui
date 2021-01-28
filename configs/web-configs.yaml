@@ -1,38 +1,19 @@
-collectors:
-  - [0, [0, 1]]
-  - [0, [0, .8]]
-  - [0, [0, .5]]
-  - [0, [0, .2]]
-  - [0, [0, 0, 0, 0, 0, 1]]
+collectors: []
 testers:
-  - [0, [1], c95-e4, c95, e4]
-  - [0, [.7, .3], c99smax-e8, c99s, e1] #
-  - [0, [.7, .3], c95max-e1, c95, e1]
-  - [0, [1], c97s-e4, c97s, e4]
-  - [0, [.7, .3], c95max-e4, c95, e4]
-  - [0, [.4, .4, 0, 0, 0, .2], c95maxrand-e4, c95, e4]
-  - [0, [.4, .4, 0, 0, 0, .2], c97maxrand-e4, c97, e4]
-  - [0, [0, .8, 0, 0, 0, .2], Maxrand-e4, default, e4]
-  - [0, [0, .6, 0, 0, 0, .4], maxrand-e4, default, e4]
-  - [0, [0, 1], max-e4, default, e4]
-  - [20, [0, 0, 0, 0, 0, 1], monkey] #
+  - [2, [0, 0, 0, 0, 0, 1], monkey]
 phone_class: Browser
 monkey_client_mode: False
 data_file_dir:
-logs_dir: version_8_8_5_2020/web_logs_test
+logs_dir: ../experiments/web_logs_test
 reset_logs: True
 weights_file:
   learner:
-  e1: version_8_8_5_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5 #open_model_unet_var_0_l1_0_iic_0_weight_no_pred_56/49-01-loss_0.42-val-loss_1.22.hdf5 #open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-01-loss_0.37-val-loss_1.24.hdf5
-          #e8: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_01_weight_yes_pred_56_aug_yes/49-08-loss_0.82-val-loss_1.48.hdf5
-          #e10: version_9_8_15_2020/gplay_model_unet_alpha_05_var_0_l1_0_iic_0_weight_yes_pred_56_aug_yes/49-08-loss_0.37-val-loss_0.70.hdf5
-          #e10: version_6_7_31_2020/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-07-loss_0.19-val-loss_1.32.hdf5
-          #e10: version_6_7_31_2020/legacy2/open_model_unet_var_0_l1_0_iic_0_weight_yes_pred_56/49-10-loss_0.20-val-loss_0.29.hdf5
+  e10:
 collectors_apks_path:
-testers_apks_path: apks/open/v6/test
+testers_apks_path: not_used
 collectors_clone_script:
-testers_clone_script: taskset -c 0 /home/ferisampad/clone_avd.sh tester_ref
-prediction_shape: [56, 56] #[224, 224]
+testers_clone_script:
+prediction_shape: [56, 56]
 reward_predictor: [RandomRewardPredictor, random] #[UNetRewardPredictor, unet]
 variance_reg_coeff: 0
 l1_reg_coeff: 0
@@ -45,6 +26,7 @@ action_prob_coeffs: [1., 0.3, 0.1]
 
 coordinator_configs:
   train: False
+  evaluate_dir:
   pre_training: False
   collect_before_pre_training: False
   sync_weight: False
@@ -64,9 +46,9 @@ tester_configs:
   max_file_size: 10
   past_rewards_window: 20
   past_rewards_threshold: .75
-  learn: False #here
+  learn: False
   loss_threshold: 0.05
-  file_dir: version_8_8_5_2020/otest_data_files_test
+  file_dir: not_used
   weight_reset_frequency: 300
   learning_rate: 0.001
   learner_configs:
@@ -108,10 +90,10 @@ environment_configs:
   shuffle_apps: False
   calculate_reward: False
   start_phone_fresh: True
-  app_start_callback: #bash /home/ferisampad/coverage.sh {device} /home/ferisampad/deep-gui/{apk} /home/ferisampad/monkey/coverages/otest-maxrand-e8 & echo $! > .{device}.pid
-  app_end_callback: #kill -9 `cat .{device}.pid` || true
-  fatal_error_callback: #kill -10 `cat .{device}.pid` || true
-  fatal_error_handled_callback: #kill -12 `cat .{device}.pid` || true
+  app_start_callback:
+  app_end_callback:
+  fatal_error_callback:
+  fatal_error_handled_callback:
 
 browser_configs:
   window_size: [640, 480]
@@ -138,14 +120,9 @@ browser_configs:
     - office.com
     - live.com
     - twitch.tv
-      #    - microsoft.com
-      #    - instagram.com
-      #    - chase.com
-      #    - chaturbate.com
-      #    - zillow.com
 
 phone_configs:
-  screen_shape: [234, 224] #[854, 480]
+  screen_shape: [234, 224]
   dummy_mode_configs:
     - 4
     - 2
@@ -161,7 +138,7 @@ phone_configs:
   install_wait_time: 10
   app_start_max_wait_time: 15
   after_app_start_wait_time: 10
-  app_exit_wait_time: 5 #30
+  app_exit_wait_time: 5
   phone_start_boot_max_wait_time: 300
   phone_restart_kill_max_wait_time: 300
   phone_boot_wait_time: 10
@@ -169,11 +146,11 @@ phone_configs:
   disable_input_methods: True
   maintain_visited_activities: True
   install_apks: False
-  avd_path: /home/ferisampad/.android/avd
-  aapt_path: /home/ferisampad/android-sdk/build-tools/29.0.2/aapt
-  adb_path: /home/ferisampad/android-sdk/platform-tools/adb
-  emulator_path: /home/ferisampad/android-sdk/emulator/emulator -no-window -no-audio
-  emma_jar_path: /home/ferisampad/emma.jar
+  avd_path: 
+  aapt_path: 
+  adb_path: 
+  emulator_path: 
+  emma_jar_path: 
   screenshots_dir: .
   grep_command: grep
   timeout_template: 'timeout -t {}' #'timeout {}s' #'timeout -t {}'
@@ -190,8 +167,8 @@ phone_configs:
 
 
 screen_preprocessor_configs:
-  crop_top_left: [0, 0] #[10, 0] #[30, 0]
-  crop_size: [234, 224] #[224, 224] #[824, 480]
+  crop_top_left: [0, 0]
+  crop_size: [234, 224]
   resize_size: [224, 224]
   grayscale: False
   scale_color: False
@@ -209,17 +186,15 @@ simple_reward_predictor_configs:
 unet_reward_predictor_configs:
   screen_encoder_configs:
     inner_configs:
-      alpha: 0.35 #0.5 #0.35
+      alpha: 0.5
       weights: imagenet
     output_layer_names:
-      - block_16_project # 7
-      - block_13_expand_relu # 14
-      - block_6_expand_relu # 28
-        #      - block_3_expand_relu # 56
-        #      - block_1_expand_relu # 112
+      - block_16_project
+      - block_13_expand_relu
+      - block_6_expand_relu
 
   reward_decoder_configs:
-    filter_nums: [30, 15] #[256, 128] #[30, 15] #[256, 128, 64, 32]
+    filter_nums: [256, 128]
     kernel_sizes: 3
     stride_sizes: 2
     padding_types: SAME
@@ -240,11 +215,11 @@ collector_logger_configs:
 clusterer_configs:
   default:
     start_clickable_threshold: 0.90
-    clickable_threshold_speed: 0 #.095
-    clickable_threshold_speed_step: 1 #300
-    speed_steps_per_clickable_threshold_reset: 1 #10
-    distance_threshold: 2.99 #8.99 #2.99
-    cluster_count_threshold: 4 #16 #4
+    clickable_threshold_speed: 0
+    clickable_threshold_speed_step: 1
+    speed_steps_per_clickable_threshold_reset: 1
+    distance_threshold: 2.99
+    cluster_count_threshold: 4
   c90s:
     distance_threshold: 1.99
     cluster_count_threshold: 6
