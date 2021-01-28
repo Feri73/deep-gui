@@ -10,3 +10,7 @@
 !configs/*.yaml
 !scripts
 !scripts/*
+!models
+!models/*
+
+scripts/.analysis_cache.pck

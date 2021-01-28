@@ -4,7 +4,7 @@ Deep-GUI is a tool for generating intelligent inputs to test UI-based applicatio
 
 ## Prerequisites
 
-The system is tested in the configuration:
+The system is tested in this configuration:
 * Ubuntu 18.04
 * Python 3.6.8
 
@@ -65,6 +65,8 @@ To train using the collected data:
 2. Copy `configs/train-configs.yaml` to `src/configs.yaml`
 3. Run the code: `cd src; python main.py`
 
+<b>Note:</b> A pre-trained model is availabe in `models`
+
 ### Android Experiments
 To run the experiments:
 1. Create emulator template
@@ -91,13 +93,12 @@ To run the experiments:
     * If you want to run deep-gui: 
 		```
     	cd scripts
-		./run_all_monkies.sh <experiment-name> deep 1 <num-agents> <num-rounds> <apk-dir> <experiment-dir>
+		./run_all_monkies.sh <experiment-name> deep 1 <num-agents> 1 <apk-dir> <experiment-dir>
 		```
  	where:
     ```
    <experiment-name>: An arbitrary name for the experiment
    <num-agents>: Number of parallel agents (must match the configs.yaml file)
-   <num-rounds>: The number of times each application is tested.
    <apk-dir>: The directory containing apks. Each apk named app.apk needs to have a emma file in the same directory named app.apk.em
    <experiment-dir>: The directory containing the experiment files
    ```
@@ -143,4 +144,20 @@ To run the experiments:
 	tensorboard --logdir=. --reload_interval 1 --samples_per_plugin "images=0"
 	```
     Connect to `localhost:6006` to see tensorboard logs.
+
+### Analysis
+To analyze the results:
+1. Uncomment the appropriate section in `scripts/analysis.sh`
+2. Run the analysis:
+	```
+	cd scripts
+	./run_all_analyses.sh <experiment-dir> <apk-dir> <<num-agents>
+	```
+3. Check the results:
+	```
+	cd <experiment-dir>/tb_otest_logs/analysis
+	tensorboard --logdir=. --reload_interval 1 --samples_per_plugin "images=0"
+   	```
+    
+	Connect to `localhost:6006` to see tensorboard logs.
 

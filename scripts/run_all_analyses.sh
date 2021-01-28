@@ -1,7 +1,8 @@
 exp_dir=$1
 apks_dir=$2
-exc_apks_dir=$3
-simplest=$4
+runs_per_app=$3
+exc_apks_dir=$4
+simplest=$5
 
 rm .analysis_cache.pck
 cache=0
@@ -16,14 +17,14 @@ add_analysis() {
 	if [ ! -z "$exc_apks_dir" ]; then
 		local exc_apks_d="--excluded-apps-dir $exc_apks_dir"
 	fi
-	./analysis.sh $name $exp_dir/tb_otest_logs $apks_dir "$exc_apks_d $options"
+	./analysis.sh $name $exp_dir/tb_otest_logs $apks_dir "$exc_apks_d $options" $runs_per_app
 	mkdir $exp_dir/tmpdir
 	mv $exp_dir/tb_otest_logs/*$name* $exp_dir/tmpdir/
 	mv $exp_dir/tmpdir $exp_dir/tb_otest_logs/$name
 }
 
 #add_analysis nt_none-nr_none-na_none-sa_mean_app_run "--ignore-missing args --summary-action mean --summary-axes app run --kstest-ref monkey --kstest-alt less"
-add_analysis nt_mean-nr_monkey-na_run-sa_mean_app_run "--ignore-missing args --norm-type mean --norm-ref monkey --norm-axes run --summary-action mean --summary-axes app run --kstest-ref monkey --kstest-alt less"
+add_analysis analysis "--ignore-missing args --norm-type mean --norm-ref monkey --norm-axes run --summary-action mean --summary-axes app run --kstest-ref monkey --kstest-alt less"
 if (( simplest == 1 )); then exit 0; fi
 #add_analysis nt_none-nr_none-na_none-sa_mean_run "--ignore-missing args --summary-action mean --summary-axes run --kstest-ref monkey --kstest-alt less"
 #add_analysis nt_none-nr_none-na_none-sa_ent_run_time "--ignore-missing args --summary-action entropy --summary-axes run time --kstest-ref monkey --kstest-alt less"
