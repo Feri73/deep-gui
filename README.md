@@ -67,7 +67,7 @@ To train using the collected data:
 
 <b>Note:</b> A pre-trained model is availabe in `models`
 
-### Android Experiments
+### Android Experiments (Monkey++)
 To run the experiments:
 1. Create emulator template
    ```
@@ -151,7 +151,7 @@ To analyze the results:
 2. Run the analysis:
 	```
 	cd scripts
-	./run_all_analyses.sh <experiment-dir> <apk-dir> <<num-agents>
+	./run_all_analyses.sh <experiment-dir> <apk-dir> <num-agents>
 	```
 3. Check the results:
 	```
