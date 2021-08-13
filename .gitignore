@@ -4,6 +4,8 @@
 # But not these files...
 !README.md
 !.gitignore
+!apks
+!apks/*
 !src
 !src/*.py
 !configs
