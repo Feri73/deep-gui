@@ -22,7 +22,7 @@ Before getting started:
 	* Install Packages in requirements.txt
 
 **Note: it is important to install the requirements in the exact paths mentioned above.**
-## File Structure
+## Repository Structure
 ```
 deep-gui        
 │
