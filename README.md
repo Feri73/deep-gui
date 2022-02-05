@@ -179,3 +179,13 @@ To analyze the results:
     
 	Connect to `localhost:6006` to see tensorboard logs.
 
+
+## References
+If you use the code or data, please cite the following paper: 
+```
+@INPROCEEDINGS{9678778, 
+author={YazdaniBanafsheDaragh, Faraz and Malek, Sam},
+title={Deep GUI: Black-box GUI Input Generation with Deep Learning},
+booktitle={2021 36th IEEE/ACM International Conference on Automated Software Engineering (ASE)},
+year={2021},  volume={},  number={},  pages={905-916},  doi={10.1109/ASE51524.2021.9678778}}
+```
