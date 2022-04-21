@@ -133,7 +133,7 @@ phone_configs:
   install_apks: False
   avd_path:
   aapt_path:
-  adb_path:
+  adb_path: /home/$USER/android-sdk/platform-tools/adb
   emulator_path:
   emma_jar_path:
   screenshots_dir: .
