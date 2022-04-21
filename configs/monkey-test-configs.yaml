@@ -1,6 +1,6 @@
 collectors: []
 testers:
-  - [2, [.7, .3, 0, 0, 0, 0, deep, c95s, e10]
+  - [2, [.7, .3, 0, 0, 0, 0], deep, c95s, e10]
 phone_class: Phone
 monkey_client_mode: True
 data_file_dir:
